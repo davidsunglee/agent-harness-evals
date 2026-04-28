@@ -15,9 +15,9 @@ A case is the unit a future harness will load from disk. Each case has the follo
 - `case_id` — string identifier for the case (e.g. `py-divisor-001`).
 - `fixture_repo` — path to the canonical fixture repository owned by the harness; this is the read-only source of truth and is never edited in place.
 - `failing_test_command` — exact shell command that reproduces the failure (e.g. `pytest -q tests/test_divisor.py::test_safe_divide`).
-- `failure_output` — captured stdout/stderr from one clean run of `failing_test_command` against the fixture, recorded at case authoring time; this is the CI-style triage signal handed to the agent.
+- `failure_output` — captured stdout/stderr from one clean run of `failing_test_command` against the fixture, recorded at case authoring time; this is the CI-style triage signal handed to the agent. Cases may instead provide `failure_output_path`, a repo-relative path to a UTF-8 sidecar file containing the captured output, when the trace is large or JSON-escapes poorly. A case must provide exactly one of `failure_output` or `failure_output_path`; the harness reads the file when the path form is used and substitutes the resolved string into `input.failure_output` either way.
 - `edit_constraints` — object controlling which files the agent may modify:
-  - `disallowed_paths` (required) — list of repo-relative globs the agent must not modify.
+  - `disallowed_paths` (optional) — list of repo-relative globs the agent must not modify. Omit to use the default in *Default Edit Constraints* below.
   - `allowed_paths` (optional) — list of repo-relative globs the agent is restricted to; omit for cases that do not need containment.
   - `max_changed_files` (optional) — integer upper bound on the number of files the agent may change.
 - `hidden_test_command` (optional) — a second test command the harness runs after the agent exits; used to detect fixes that pass the visible test but break unrelated behavior.
@@ -25,7 +25,7 @@ A case is the unit a future harness will load from disk. Each case has the follo
 
 ### Default Edit Constraints
 
-When a case omits per-case constraint fields, the harness applies these defaults:
+When a case omits per-case constraint fields — including the case where `edit_constraints` is provided as an empty object `{}` — the harness applies these defaults to the missing fields:
 
 - `disallowed_paths` defaults to globs covering test files, fixtures, lockfiles, changelogs, and `.git/` metadata: `tests/**`, `**/*test*`, `**/*fixture*`, `**/*lock*`, `**/CHANGELOG*`, `.git/**`. This exists to prevent the obvious gaming patterns of editing tests or pinned dependencies.
 - `allowed_paths` defaults to **unrestricted** — anything not in `disallowed_paths` is editable. The default is loose so the constraint itself does not reveal the fix location.
