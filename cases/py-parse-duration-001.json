@@ -1,0 +1,9 @@
+{
+  "case_id": "py-parse-duration-001",
+  "fixture_repo": "fixtures/parse_duration",
+  "failing_test_command": "pytest -q tests/test_parse_duration.py",
+  "failure_output_path": "cases/py-parse-duration-001.failure_output.txt",
+  "hidden_test_command": "pytest -q tests/test_parse_duration_extended.py",
+  "edit_constraints": {},
+  "notes": "Bootstrap fixture; bug is data in parse_duration/units.py while the stack trace points at parse_duration/parser.py. Hidden test catches three under-fixes: adding only 's' to UNITS, defensive UNITS.get(..., 1) in parser.py, and hardcoding the failing input in parser.py."
+}
