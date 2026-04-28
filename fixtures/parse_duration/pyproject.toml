@@ -1,7 +1,7 @@
 [project]
 name = "parse-duration-fixture"
 version = "0.0.0"
-description = "Bootstrap fixture for the urban-winner agent shootout"
+description = "Parse human-readable duration strings (5s, 10m, 1h) into integer seconds"
 requires-python = ">=3.11"
 dependencies = []
 
