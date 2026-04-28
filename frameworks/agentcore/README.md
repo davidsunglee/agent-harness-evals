@@ -1,0 +1,10 @@
+# agentcore
+
+Amazon Bedrock AgentCore (Python).
+
+TODO:
+- [ ] `manifest.json` declaring entry point
+- [ ] `pyproject.toml` + lockfile
+- [ ] Implementation against `../../shared/task-spec.md`
+- [ ] `run.sh` honoring `../../shared/contract.md`
+- [ ] AWS credentials / Bedrock access notes
