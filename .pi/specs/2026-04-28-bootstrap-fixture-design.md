@@ -62,7 +62,7 @@ The hidden test discriminates against at least three plausible-but-wrong fixes:
 
 - Adding only `"s": 1` to `UNITS`: visible passes, hidden's `"1h"` still raises `KeyError`.
 - Defensive guard in `parser.py` such as `UNITS.get(s[-1], 1)`: visible passes (`5*1=5`), hidden's `"1h"` returns `1` instead of `3600`.
-- Hardcoding the failing input in `parser.py` (e.g. `if s == "5s": return 5`): visible passes, hidden's `"1h"` and `"10m"` both wrong or raising.
+- Hardcoding the failing input in `parser.py` (e.g. `if s == "5s": return 5` falling through to the original lookup): visible passes, `test_parse_minutes_still_works` passes (the fall-through still resolves `"10m"` correctly), but `test_parse_hours` fails because `"1h"` falls through and raises `KeyError: 'h'`.
 
 A correct fix is a single edit to `units.py`: `UNITS = {"s": 1, "m": 60, "h": 3600}`.
 
@@ -73,13 +73,20 @@ A correct fix is a single edit to `units.py`: `UNITS = {"s": 1, "m": 60, "h": 36
   "case_id": "py-parse-duration-001",
   "fixture_repo": "fixtures/parse_duration",
   "failing_test_command": "pytest -q tests/test_parse_duration.py",
-  "failure_output": "<captured KeyError stack trace from one clean run>",
+  "failure_output_path": "cases/py-parse-duration-001.failure_output.txt",
   "hidden_test_command": "pytest -q tests/test_parse_duration_extended.py",
   "edit_constraints": {}
 }
 ```
 
-`edit_constraints` is intentionally empty so the harness applies its defaults: `disallowed_paths` covers `tests/**`, `**/*test*`, `**/*fixture*`, `**/*lock*`, `**/CHANGELOG*`, `.git/**`; `allowed_paths` is unrestricted; `max_changed_files` is `5`. `failure_output` is recorded once at case authoring time, not regenerated per run.
+`edit_constraints` is intentionally empty so the harness applies its defaults: `disallowed_paths` covers `tests/**`, `**/*test*`, `**/*fixture*`, `**/*lock*`, `**/CHANGELOG*`, `.git/**`; `allowed_paths` is unrestricted; `max_changed_files` is `5`.
+
+The captured failure output is recorded once at case authoring time. The manifest references it through exactly one of two fields, of which the harness must accept either:
+
+- `failure_output` — the captured stdout/stderr embedded inline as a JSON string, or
+- `failure_output_path` — a repo-relative path to a sidecar UTF-8 text file containing the captured output.
+
+The v1 bootstrap fixture uses `failure_output_path` because multi-line tracebacks JSON-escape poorly. Both fields produce the same agent-visible value: when assembling the agent input, the harness reads the file (if `failure_output_path` is given) or uses the inline string, and substitutes it into `input.failure_output`. Exactly one of the two fields must be present.
 
 ### Notes (case-author commentary, not surfaced to agents)
 
