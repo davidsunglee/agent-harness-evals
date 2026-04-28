@@ -7,7 +7,7 @@
     "evals",
     "bugfix"
   ],
-  "status": "open",
+  "status": "done",
   "created_at": "2026-04-28T18:58:28.392Z"
 }
 
@@ -26,3 +26,5 @@ Agent receives a small repository, a failing test command/CI failure description
 
 ## Next step
 Use this as the recommended first implementation for `shared/task-spec.md`.
+
+Completed via plan: .pi/plans/done/2026-04-28-2026-04-28-software-bugfix-benchmark-contract.md
