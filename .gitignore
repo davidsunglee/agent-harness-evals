@@ -29,3 +29,6 @@ results/
 
 # Local worktrees
 .worktrees/
+
+# Derivative scratch data (e.g. cached SWE-bench instance JSONs)
+.pi/scratch/

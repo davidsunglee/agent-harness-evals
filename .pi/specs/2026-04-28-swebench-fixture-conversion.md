@@ -82,9 +82,11 @@ For each case, all tests in `FAIL_TO_PASS` exist in the post-`test_patch` fixtur
 
 The case-author records, in `notes`, which under-fix patterns each hidden test catches. Concretely, for each hidden test the author writes one line: "test X catches a fix that does Y but not Z."
 
-If a case's `FAIL_TO_PASS` contains only one test (none of the trio does, but a future case might), the rule degrades: visible = that test, hidden = a curated subset of `PASS_TO_PASS` chosen to exercise the closest-related code path. The degradation is documented in `notes`. We will not invent synthetic hidden tests — the hidden command must run only tests that exist in the fixture as committed.
+If a case's `FAIL_TO_PASS` contains only one test, the rule degrades: visible = that test, hidden = a curated subset of `PASS_TO_PASS` chosen to exercise the closest-related code path. The degradation is documented in `notes`. We do not invent synthetic hidden tests — the hidden command must run only tests that exist in the fixture as committed.
 
-`PASS_TO_PASS` is not used as the primary hidden source for this trio. `PASS_TO_PASS` catches regressions in unrelated behavior, not partial fixes; mixing both signals into one `hidden_test_command` would muddy the diagnostic value of `hidden_test_outcome: fail`. Regression-style coverage may be added later as a third optional command if data shows it adds signal.
+Two of the three trio cases trigger the degradation: `pylint-dev__pylint-7080` (1 F2P, 120 P2P) and `pytest-dev__pytest-7571` (1 F2P, 14 P2P) both have a single `FAIL_TO_PASS` test. `psf__requests-1921` (6 F2P, 107 P2P) is the only case where the primary F2P-split rule applies. This means `PASS_TO_PASS` is the hidden source for the majority of the trio in practice; the rule cleanly degrades to it.
+
+When `PASS_TO_PASS` is the hidden source, the case author hand-picks the subset that exercises the same code path the bug lives in (typically by module, fixture, or test-class proximity). Curation matters here — `PASS_TO_PASS` covers regressions in unrelated behavior as a baseline, but for under-fix detection we want tests that exercise scenarios the partial-fix author would plausibly miss. The selected subset and the under-fix patterns it catches are documented in `notes` per the case-manifest convention below.
 
 ### Per-case bootstrap order
 
@@ -102,7 +104,7 @@ Per-case quirks above are *expected, not confirmed* — the bootstrap process fl
 - The case manifest schema in `shared/task-spec.md` is unchanged. New fields (e.g. structured `provenance`) are explicitly out of scope; provenance lives in `notes`.
 - `<instance_id>` matches the upstream SWE-bench ID exactly. Renaming for cosmetic consistency with `py-parse-duration-001` is rejected — provenance is more valuable than naming uniformity.
 - The fixture may not depend on network access at harness run time. All dependencies must be resolvable from `uv.lock` alone.
-- Hidden tests must be drawn from `FAIL_TO_PASS` for the trio; the `PASS_TO_PASS` fallback is reserved for the single-F2P degradation case and is not exercised by this batch.
+- Hidden tests are drawn from `FAIL_TO_PASS` where the case has multi-F2P (only `psf__requests-1921` in this trio) and from a curated `PASS_TO_PASS` subset where the case has single-F2P (`pylint-dev__pylint-7080` and `pytest-dev__pytest-7571`). Both sources are valid for v1.
 
 ## Acceptance Criteria
 
