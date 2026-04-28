@@ -1,0 +1,34 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______ RequestsTestCase.test_headers_on_session_with_None_are_not_sent ________
+
+self = <test_requests.RequestsTestCase testMethod=test_headers_on_session_with_None_are_not_sent>
+
+    def test_headers_on_session_with_None_are_not_sent(self):
+        """Do not send headers in Session.headers with None values."""
+        ses = requests.Session()
+        ses.headers['Accept-Encoding'] = None
+        req = requests.Request('GET', 'http://httpbin.org/get')
+        prep = ses.prepare_request(req)
+>       assert 'Accept-Encoding' not in prep.headers
+E       AssertionError: assert 'Accept-Encoding' not in CaseInsensitiveDict({'User-Agent': 'python-requests/2.3.0 CPython/3.9.25 Darwin/25.4.0', 'Accept-Encoding': None, 'Accept': '*/*'})
+E        +  where CaseInsensitiveDict({'User-Agent': 'python-requests/2.3.0 CPython/3.9.25 Darwin/25.4.0', 'Accept-Encoding': None, 'Accept': '*/*'}) = <PreparedRequest [GET]>.headers
+
+test_requests.py:220: AssertionError
+=============================== warnings summary ===============================
+requests/packages/urllib3/_collections.py:7
+  /Users/david/Code/urban-winner/fixtures/psf__requests-1921/requests/packages/urllib3/_collections.py:7: DeprecationWarning: Using or importing the ABCs from 'collections' instead of from 'collections.abc' is deprecated since Python 3.3, and in 3.10 it will stop working
+    from collections import MutableMapping
+
+requests/sessions.py:12
+  /Users/david/Code/urban-winner/fixtures/psf__requests-1921/requests/sessions.py:12: DeprecationWarning: Using or importing the ABCs from 'collections' instead of from 'collections.abc' is deprecated since Python 3.3, and in 3.10 it will stop working
+    from collections import Mapping
+
+test_requests.py::RequestsTestCase::test_headers_on_session_with_None_are_not_sent
+  /Users/david/Code/urban-winner/fixtures/psf__requests-1921/requests/models.py:164: DeprecationWarning: Using or importing the ABCs from 'collections' instead of from 'collections.abc' is deprecated since Python 3.3, and in 3.10 it will stop working
+    if isinstance(hook, collections.Callable):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED test_requests.py::RequestsTestCase::test_headers_on_session_with_None_are_not_sent
+1 failed, 3 warnings in 0.03s
