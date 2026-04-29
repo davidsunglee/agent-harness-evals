@@ -278,15 +278,13 @@ def run_cell(
             framework_misconfigured_reason=misconfig_reason,
         )
 
-    # Send request, then close stdin.
-    try:
-        proc.stdin.write(request_json.encode("utf-8"))
-        proc.stdin.close()
-    except (BrokenPipeError, OSError):
-        pass
-
     stdout_truncated = False
     stderr_truncated = False
+    request_bytes = request_json.encode("utf-8")
+    deadline = t0 + effective_config.timeout_s
+
+    def remaining_timeout() -> float:
+        return max(0.0, deadline - time.monotonic())
 
     def pump_stdout() -> None:
         nonlocal stdout_truncated
@@ -296,18 +294,38 @@ def run_cell(
         nonlocal stderr_truncated
         stderr_truncated = _pump_capped(proc.stderr, stderr_path, STDERR_CAP_BYTES)
 
+    def write_stdin() -> None:
+        try:
+            proc.stdin.write(request_bytes)
+        except (BrokenPipeError, OSError):
+            pass
+        finally:
+            try:
+                proc.stdin.close()
+            except OSError:
+                pass
+
     t1 = threading.Thread(target=pump_stdout, daemon=True)
     t2 = threading.Thread(target=pump_stderr, daemon=True)
+    t_stdin = threading.Thread(target=write_stdin, daemon=True)
     t1.start()
     t2.start()
+    t_stdin.start()
 
     timed_out = False
     try:
-        proc.wait(timeout=effective_config.timeout_s)
+        proc.wait(timeout=remaining_timeout())
     except subprocess.TimeoutExpired:
         timed_out = True
         terminate_process_tree(proc, KILL_GRACE_S)
 
+    if not timed_out:
+        t_stdin.join(timeout=remaining_timeout())
+        if t_stdin.is_alive():
+            timed_out = True
+            terminate_process_tree(proc, KILL_GRACE_S)
+
+    t_stdin.join()
     t1.join()
     t2.join()
 

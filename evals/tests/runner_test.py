@@ -1,5 +1,6 @@
 import json
 import os
+import signal
 import threading
 import time
 from pathlib import Path
@@ -75,6 +76,84 @@ def _run(tmp_path: Path, fake_framework_dir: Path, behavior: str, *, timeout_s: 
         base_env=env,
         dotenv=DOTENV,
     ), cell_dir
+
+
+def test_runner_timeout_covers_blocked_stdin_write(tmp_path):
+    fw_dir = tmp_path / "never-read-fw"
+    fw_dir.mkdir()
+    pid_file = tmp_path / "never-read.pid"
+    entry = fw_dir / "run.py"
+    entry.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "import time\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['NEVER_READ_STDIN_PID_FILE']).write_text(str(os.getpid()))\n"
+        "while True:\n"
+        "    time.sleep(0.1)\n"
+    )
+    entry.chmod(0o755)
+    fw = FrameworkSpec(
+        name="never-read-fw",
+        dir=fw_dir,
+        manifest_path=fw_dir / "manifest.json",
+        entry="./run.py",
+        setup=None,
+        env_keys=["NEVER_READ_STDIN_PID_FILE"],
+        model="fake",
+    )
+    case_repo = tmp_path / "large-case-repo"
+    case_repo.mkdir()
+    case = CaseSpec(
+        case_id="large-stdin-case",
+        manifest_path=tmp_path / "case.json",
+        fixture_repo=case_repo,
+        failing_test_command="pytest -q",
+        hidden_test_command=None,
+        failure_output="x" * (16 * 1024 * 1024),
+        edit_constraints={},
+        notes=None,
+    )
+    cell_dir = tmp_path / "cell"
+    (cell_dir / "repo").mkdir(parents=True)
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    result_holder: dict = {}
+
+    def run() -> None:
+        try:
+            result_holder["result"] = run_cell(
+                framework=fw,
+                case=case,
+                effective_config=_effective(timeout_s=1),
+                cell_dir=cell_dir,
+                cache_dir=cache_dir,
+                repo_root=tmp_path,
+                base_env={**BASE_ENV, "NEVER_READ_STDIN_PID_FILE": str(pid_file)},
+                dotenv=DOTENV,
+            )
+        except BaseException as exc:
+            result_holder["exc"] = exc
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(timeout=5)
+    returned_under_timeout = not t.is_alive()
+    if not returned_under_timeout and pid_file.exists():
+        try:
+            os.killpg(int(pid_file.read_text()), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        t.join(timeout=2)
+
+    assert returned_under_timeout, (
+        "run_cell should enforce timeout while writing a large request to child stdin"
+    )
+    assert "exc" not in result_holder
+    result = result_holder["result"]
+    assert result.timed_out is True
+    assert result.error_reason == "timeout"
+    assert result.exit_code is None
 
 
 def test_runner_writes_request_json_before_spawn(fake_framework_dir, tmp_path):
