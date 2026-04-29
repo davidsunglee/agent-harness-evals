@@ -98,4 +98,12 @@ Remaining from reviewer: stale prepare hashes, non-atomic campaign lock, and `ev
   - `cd evals && uv run pytest -q tests/`
   - `cd evals && uv run pytest -q -m integration`
 
-Remaining from reviewer: stale prepare hashes, non-atomic campaign lock, and `eval-all --framework/--case` typo handling.
+**Batch 3: prepare cache freshness + filter typo handling**
+- Fixed `_prepare_needed()` to compare cached `.fixture-hash` / `.lock-hash` sidecars against current fixture and lock hashes instead of only checking directory presence.
+- Fixed `cmd_eval_all()` to reject unknown `--framework` / `--case` filters with exit code 2 and a helpful known-values message before campaign creation or prepare work.
+- Added regression coverage in `evals/tests/cli_test.py` for stale fixture hashes, stale lock hashes, and typoed filter arguments.
+- Verification run:
+  - `cd evals && uv run pytest -q tests/cli_test.py`
+  - `cd evals && uv run pytest -q -m 'not integration'`
+
+Remaining from reviewer: non-atomic campaign lock.

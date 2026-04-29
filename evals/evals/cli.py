@@ -16,6 +16,8 @@ from evals.setup import run_framework_setup
 from evals.status import print_status
 from evals.workspace import (
     clone_cell_worktree,
+    compute_fixture_hash,
+    compute_lock_hash,
     compute_venv_fingerprint,
     ensure_case_bare_repo,
     ensure_case_venv,
@@ -112,6 +114,31 @@ def _prepare_needed(repo_root: Path, frameworks, cases, cache_dir: Path) -> bool
         if not (cache_dir / f"{case.case_id}.git").exists():
             return True
         if not (cache_dir / f"{case.case_id}.venv").exists():
+            return True
+        # Detect mutated fixtures or lock files even when the cached layers
+        # still exist on disk: ensure_case_bare_repo / ensure_case_venv key
+        # off these hash files, so a stale or missing one means the next
+        # eval-all would otherwise reuse outdated cache contents.
+        fixture_hash_file = cache_dir / f"{case.case_id}.fixture-hash"
+        if not fixture_hash_file.exists():
+            return True
+        try:
+            current_fixture_hash = compute_fixture_hash(
+                repo_root, case.case_id, case.fixture_repo
+            )
+        except Exception:
+            return True
+        if fixture_hash_file.read_text().strip() != current_fixture_hash:
+            return True
+
+        lock_hash_file = cache_dir / f"{case.case_id}.lock-hash"
+        if not lock_hash_file.exists():
+            return True
+        try:
+            current_lock_hash = compute_lock_hash(case.fixture_repo)
+        except Exception:
+            return True
+        if lock_hash_file.read_text().strip() != current_lock_hash:
             return True
     return False
 
@@ -250,6 +277,23 @@ def cmd_eval_all(args) -> int:
     repo_root = _repo_root()
     frameworks, _ = discover_frameworks(repo_root)
     cases, _ = discover_cases(repo_root)
+
+    # Fail fast on unknown filter values so typos like `--framework caude`
+    # don't silently no-op (and don't trigger campaign creation / prepare).
+    if args.framework and args.framework not in {f.name for f in frameworks}:
+        known = ", ".join(sorted(f.name for f in frameworks)) or "<none>"
+        print(
+            f"unknown framework: {args.framework!r}; known frameworks: {known}",
+            file=sys.stderr,
+        )
+        return 2
+    if args.case and args.case not in {c.case_id for c in cases}:
+        known = ", ".join(sorted(c.case_id for c in cases)) or "<none>"
+        print(
+            f"unknown case: {args.case!r}; known cases: {known}",
+            file=sys.stderr,
+        )
+        return 2
 
     overrides = _build_overrides(args)
     existing = current_campaign(repo_root)
