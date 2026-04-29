@@ -51,7 +51,7 @@ def test_eval_all_with_stub_frameworks(
 
     monkeypatch.setattr(cli, "_repo_root", lambda: repo)
 
-    args = cli._build_parser().parse_args(["eval-all", "--timeout-s", "30"])
+    args = cli._build_parser().parse_args(["eval-all"])
     rc = cli.cmd_eval_all(args)
     assert rc == 0, f"cmd_eval_all returned {rc}"
 
@@ -59,6 +59,18 @@ def test_eval_all_with_stub_frameworks(
     manifest_path = current / "manifest.json"
     assert manifest_path.exists()
     manifest = json.loads(manifest_path.read_text())
+    expected_frameworks = {
+        "agentcore",
+        "claude-agent-sdk",
+        "deepagents",
+        "google-adk",
+        "mastra",
+        "openai-agents",
+        "pydantic-ai",
+        "strands",
+    }
+    assert set(manifest["frameworks"]) == expected_frameworks
+    assert manifest["cases"] == ["test-case-001"]
 
     cells_seen = 0
     for fw_name in manifest["frameworks"]:
@@ -72,7 +84,7 @@ def test_eval_all_with_stub_frameworks(
                 f"{fw_name}/{case_id}: error_reason={meta['error_reason']!r}"
             )
             cells_seen += 1
-    assert cells_seen >= 1
+    assert cells_seen == len(expected_frameworks) * len(manifest["cases"])
 
     report_path = current / "report.md"
     assert report_path.exists()

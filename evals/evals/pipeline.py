@@ -304,6 +304,7 @@ def assemble_scoring(
     diff_summary: dict,
     latency_ms: int,
     parsed_envelope: object | None,
+    response_present: bool,
 ) -> dict:
     scoring = {
         "schema_validity": schema_validity,
@@ -318,7 +319,7 @@ def assemble_scoring(
         "latency_ms": latency_ms,
         "trace_quality": "n/a",
     }
-    if isinstance(parsed_envelope, dict):
+    if response_present and isinstance(parsed_envelope, dict):
         trace = parsed_envelope.get("trace")
         if isinstance(trace, dict):
             tokens = trace.get("tokens")
@@ -505,6 +506,7 @@ def run_pipeline(
         diff_summary=diff_summary,
         latency_ms=runner_result.latency_ms,
         parsed_envelope=parsed,
+        response_present=runner_result.response_path is not None,
     )
 
     if runner_result.error_reason is None:

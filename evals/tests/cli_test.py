@@ -482,6 +482,63 @@ def test_eval_all_continues_after_framework_setup_failure(
     assert attempted_cells == [("setup-fw", "case-001")]
 
 
+def test_eval_auto_prepares_selected_cell_when_cache_missing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _write_good_framework(repo)
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    _write_good_case(repo, fixture)
+    campaign_dir = cli.eval_new(
+        repo,
+        frameworks=["good"],
+        cases=["case-001"],
+        config_overrides={},
+    )
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo)
+
+    prepared: dict[str, object] = {"done": False}
+
+    def fake_prepare_needed(_repo_root, frameworks, cases, _cache_dir):
+        prepared["frameworks"] = [fw.name for fw in frameworks]
+        prepared["cases"] = [case.case_id for case in cases]
+        return True
+
+    def fake_do_prepare(**kwargs):
+        prepared["done"] = True
+        assert [fw.name for fw in kwargs["frameworks"]] == ["good"]
+        assert [case.case_id for case in kwargs["cases"]] == ["case-001"]
+        return cli._PrepareResult(
+            summary=["case case-001: ok", "framework good: skipped (no setup)"],
+            failed=False,
+            case_failed=False,
+        )
+
+    attempted_cells: list[tuple[str, str]] = []
+
+    def fake_run_one_cell(**kwargs):
+        assert prepared["done"], "single-cell eval must prepare missing caches before running"
+        assert kwargs["cell_dir"] == campaign_dir / "good" / "case-001"
+        attempted_cells.append((kwargs["fw"].name, kwargs["case"].case_id))
+        kwargs["cell_dir"].mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(cli, "_prepare_needed", fake_prepare_needed)
+    monkeypatch.setattr(cli, "_do_prepare", fake_do_prepare)
+    monkeypatch.setattr(cli, "_run_one_cell", fake_run_one_cell)
+    monkeypatch.setattr(cli, "write_report", lambda _campaign_dir: None)
+
+    args = cli._build_parser().parse_args(["eval", "good", "case-001"])
+    rc = cli.cmd_eval(args)
+
+    assert rc == 0
+    assert prepared["frameworks"] == ["good"]
+    assert prepared["cases"] == ["case-001"]
+    assert attempted_cells == [("good", "case-001")]
+
+
 def test_eval_regenerates_report_after_rerun_while_holding_lock(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -525,6 +582,7 @@ def test_eval_regenerates_report_after_rerun_while_holding_lock(
         assert locked, "report regeneration must happen before releasing the lock"
         actions.append("report")
 
+    monkeypatch.setattr(cli, "_prepare_needed", lambda *_args: False)
     monkeypatch.setattr(cli, "lock", fake_lock)
     monkeypatch.setattr(cli, "_run_one_cell", fake_run_one_cell)
     monkeypatch.setattr(cli, "write_report", fake_write_report)

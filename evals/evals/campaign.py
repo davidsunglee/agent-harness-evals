@@ -7,10 +7,18 @@ import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 
 class LockBusyError(Exception):
     pass
+
+
+_OWNED_LOCK_TOKENS: dict[Path, str] = {}
+
+
+def _lock_key(lock_path: Path) -> Path:
+    return Path(lock_path).resolve(strict=False)
 
 
 def _now_iso() -> str:
@@ -131,12 +139,13 @@ def current_campaign(repo_root) -> Path | None:
     return repo_root / "runs" / ts
 
 
-def _build_lock_data(argv: list[str]) -> dict:
+def _build_lock_data(argv: list[str], owner_token: str) -> dict:
     return {
         "pid": os.getpid(),
         "hostname": socket.gethostname(),
         "started_at": _iso_zulu(),
         "argv": argv,
+        "owner_token": owner_token,
     }
 
 
@@ -153,15 +162,17 @@ def _try_create_lock_excl(lock_path: Path, argv: list[str]) -> bool:
     payload before publishing also guarantees that any racing reader sees a
     fully-formed JSON document, never an empty or partial one.
     """
+    owner_token = uuid4().hex
     fd, tmp_path = tempfile.mkstemp(prefix=".lock.", suffix=".tmp", dir=lock_path.parent)
     tmp = Path(tmp_path)
     try:
         with os.fdopen(fd, "w") as f:
-            json.dump(_build_lock_data(argv), f)
+            json.dump(_build_lock_data(argv, owner_token), f)
         try:
             os.link(tmp, lock_path)
         except FileExistsError:
             return False
+        _OWNED_LOCK_TOKENS[_lock_key(lock_path)] = owner_token
         return True
     finally:
         try:
@@ -242,10 +253,27 @@ def acquire_lock(campaign_dir: Path, *, argv: list[str], force_unlock: bool = Fa
 
 def release_lock(campaign_dir) -> None:
     lock_path = Path(campaign_dir) / ".lock"
+    key = _lock_key(lock_path)
+    owner_token = _OWNED_LOCK_TOKENS.get(key)
+    if owner_token is None:
+        return
+
+    try:
+        lock_data = json.loads(lock_path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        _OWNED_LOCK_TOKENS.pop(key, None)
+        return
+
+    if lock_data.get("owner_token") != owner_token:
+        _OWNED_LOCK_TOKENS.pop(key, None)
+        return
+
     try:
         os.unlink(lock_path)
     except FileNotFoundError:
         pass
+    finally:
+        _OWNED_LOCK_TOKENS.pop(key, None)
 
 
 @contextmanager

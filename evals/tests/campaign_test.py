@@ -188,6 +188,8 @@ def test_acquire_lock_writes_pid_hostname(tmp_path):
     data = json.loads(lock_path.read_text())
     assert data["pid"] == os.getpid()
     assert data["hostname"] == socket.gethostname()
+    assert isinstance(data["owner_token"], str)
+    assert data["owner_token"]
 
 
 def test_acquire_lock_refuses_alive_same_host(tmp_path, monkeypatch):
@@ -262,9 +264,29 @@ def test_release_lock_removes_file(tmp_path):
     campaign_dir = tmp_path / "campaign"
     campaign_dir.mkdir()
     lock_path = campaign_dir / ".lock"
-    lock_path.write_text("{}")
+    acquire_lock(campaign_dir, argv=["test"])
     release_lock(campaign_dir)
     assert not lock_path.exists()
+
+
+def test_release_lock_does_not_remove_new_owner_after_takeover(tmp_path):
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir()
+    lock_path = campaign_dir / ".lock"
+    acquire_lock(campaign_dir, argv=["original"])
+
+    takeover_data = {
+        "pid": 12345,
+        "hostname": "other-host",
+        "started_at": "2026-01-01T00:00:00Z",
+        "argv": ["eval-all", "--force-unlock"],
+        "owner_token": "new-owner-token",
+    }
+    lock_path.write_text(json.dumps(takeover_data))
+
+    release_lock(campaign_dir)
+
+    assert json.loads(lock_path.read_text()) == takeover_data
 
 
 def test_release_lock_tolerates_missing(tmp_path):

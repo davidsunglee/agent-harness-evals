@@ -389,7 +389,53 @@ def test_assemble_scoring_token_usage_omitted_when_response_absent():
         diff_summary={"changed_files": [], "added": 0, "removed": 0},
         latency_ms=42,
         parsed_envelope=None,
+        response_present=False,
     )
+    assert "token_usage" not in scoring
+
+
+def test_pipeline_omits_token_usage_when_runner_rejected_envelope(tmp_path):
+    cell_dir = _make_buggy_worktree(tmp_path)
+    _apply_fix(cell_dir)
+    case = _make_case(hidden_test_command=None)
+    fw = _make_framework(tmp_path)
+    cfg = _make_effective_config()
+    rejected_envelope = {
+        "task_id": "T",
+        "output": {
+            "root_cause": "rc",
+            "summary": "s",
+            "changed_files": ["pkg/arith.py"],
+            "tests_run": [],
+            "evidence": "e",
+            "confidence": 0.9,
+        },
+        "trace": {
+            "steps": [],
+            "tokens": {"input": 10, "output": 20},
+            "latency_ms": 100,
+        },
+        # Missing required "error" key means the runner does not write response.json.
+    }
+    rr = _make_runner_result(
+        cell_dir,
+        error_reason="envelope_schema_violation",
+        has_response=False,
+        stdout_obj=rejected_envelope,
+    )
+
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    run_pipeline(
+        cell_dir, rr,
+        framework=fw, case=case, effective_config=cfg,
+        cache_dir=cache_dir, base_env=dict(os.environ),
+        venv_hash_before="ZZZ",
+    )
+
+    assert not (cell_dir / "response.json").exists()
+    scoring = json.loads((cell_dir / "scoring.json").read_text())
     assert "token_usage" not in scoring
 
 
