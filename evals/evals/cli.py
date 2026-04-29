@@ -186,6 +186,18 @@ def _prepare_needed(repo_root: Path, frameworks, cases, cache_dir: Path) -> bool
     return False
 
 
+def _setup_fail_is_fresh(fw, cache_dir: Path) -> bool:
+    fail_path = cache_dir / "setup" / f"{fw.name}.fail"
+    if not fail_path.exists():
+        return False
+    try:
+        data = json.loads(fail_path.read_text())
+        current_fingerprint = setup_fingerprint(fw)
+    except Exception:
+        return False
+    return (data.get("fingerprint") or data.get("hash")) == current_fingerprint
+
+
 def _do_prepare(
     *,
     repo_root: Path,
@@ -195,6 +207,7 @@ def _do_prepare(
     base_env: dict[str, str],
     dotenv: dict[str, str],
     setup_timeout_s: int,
+    skip_fresh_failed_setups: bool = False,
 ) -> _PrepareResult:
     summary: list[str] = []
     failed = False
@@ -229,6 +242,9 @@ def _do_prepare(
             continue
         if fw.setup is None:
             summary.append(f"framework {fw.name}: skipped (no setup)")
+            continue
+        if skip_fresh_failed_setups and _setup_fail_is_fresh(fw, cache_dir):
+            summary.append(f"framework {fw.name}: skipped (fresh failed setup)")
             continue
         result = run_framework_setup(
             fw,
@@ -403,6 +419,7 @@ def cmd_eval_all(args) -> int:
             base_env=base_env,
             dotenv=dotenv,
             setup_timeout_s=600,
+            skip_fresh_failed_setups=True,
         )
         for line in prepare_result.summary:
             print(line)

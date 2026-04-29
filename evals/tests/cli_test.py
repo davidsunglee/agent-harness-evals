@@ -564,6 +564,66 @@ def test_prepare_summary_includes_uv_sync_stderr_on_case_venv_failure(
     ]
 
 
+def test_eval_all_skips_fresh_framework_setup_fail_when_case_prepare_needed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _write_setup_framework(repo)
+    setup_script = repo / "frameworks" / "setup-fw" / "setup.sh"
+    setup_marker = repo / "frameworks" / "setup-fw" / "setup-ran.txt"
+    setup_script.write_text("#!/bin/sh\necho ran >> setup-ran.txt\nexit 7\n")
+    setup_script.chmod(0o755)
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    _write_good_case(repo, fixture)
+
+    cache = repo / ".runs-cache"
+    setup_dir = cache / "setup"
+    setup_dir.mkdir(parents=True)
+    frameworks, _ = discover_frameworks(repo)
+    (setup_dir / "setup-fw.fail").write_text(
+        json.dumps(
+            {
+                "reason": "nonzero_exit",
+                "fingerprint": cli.setup_fingerprint(frameworks[0]),
+            }
+        )
+    )
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo)
+
+    def create_bare_repo(_repo_root, case_id, cache_dir, _fixture_repo):
+        bare_repo = cache_dir / f"{case_id}.git"
+        bare_repo.mkdir(parents=True, exist_ok=True)
+        return bare_repo
+
+    def create_venv(_repo_root, case_id, _fixture_repo, cache_dir):
+        venv = cache_dir / f"{case_id}.venv"
+        venv.mkdir(parents=True, exist_ok=True)
+        return venv
+
+    attempted_cells: list[tuple[str, str]] = []
+
+    def record_cell_attempt(**kwargs):
+        attempted_cells.append((kwargs["fw"].name, kwargs["case"].case_id))
+        kwargs["cell_dir"].mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(cli, "ensure_case_bare_repo", create_bare_repo)
+    monkeypatch.setattr(cli, "ensure_case_venv", create_venv)
+    monkeypatch.setattr(cli, "_run_one_cell", record_cell_attempt)
+    monkeypatch.setattr(cli, "write_report", lambda _campaign_dir: None)
+
+    args = cli._build_parser().parse_args(["eval-all"])
+    rc = cli.cmd_eval_all(args)
+
+    assert rc == 0
+    assert attempted_cells == [("setup-fw", "case-001")]
+    assert not setup_marker.exists(), (
+        "eval-all must not retry a fresh failed framework setup just because case prep ran"
+    )
+
+
 def test_eval_all_continues_after_framework_setup_failure(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -44,9 +44,11 @@ None found.
 ### Follow-up after final review
 - Fixed `evals/evals/cli.py` so `_prepare_needed()` treats a fresh setup `.fail` sentinel as terminal for `eval-all`, avoiding repeated setup retries on unchanged failing frameworks.
 - Fixed `evals/evals/setup.py` so `.fail` sentinels persist the same setup fingerprint metadata as `.ok` sentinels.
+- Fixed the remaining `eval-all` case-prep path so fresh unchanged `.fail` sentinels are skipped even when unrelated case preparation is needed, while explicit `eval-prepare` still retries failed setup.
 - Added regression coverage in `evals/tests/cli_test.py` and `evals/tests/setup_test.py`.
 - Verification run:
   - `cd evals && uv run pytest -q tests/cli_test.py tests/setup_test.py`
+  - `cd evals && uv run pytest -q tests/cli_test.py::test_eval_all_skips_fresh_framework_setup_fail_when_case_prepare_needed tests/cli_test.py`
 
 ### Recommendations
 - Add a regression test for the `.fail` setup sentinel behavior: pre-create `.runs-cache/setup/<fw>.fail`, run `eval-all`, assert setup is not rerun and cells become `framework_misconfigured`.
