@@ -106,4 +106,13 @@ Remaining from reviewer: stale prepare hashes, non-atomic campaign lock, and `ev
   - `cd evals && uv run pytest -q tests/cli_test.py`
   - `cd evals && uv run pytest -q -m 'not integration'`
 
-Remaining from reviewer: non-atomic campaign lock.
+**Batch 4: atomic campaign locking**
+- Fixed `evals/evals/campaign.py` lock acquisition to use atomic exclusive publication so concurrent acquirers cannot both win.
+- Added takeover handling that refuses to clobber a newly claimed lock during stale-lock/force-unlock races.
+- Added regression coverage in `evals/tests/campaign_test.py` for concurrent acquisition and widened-TOCTOU lock replacement races.
+- Verification run:
+  - `cd evals && uv run pytest -q tests/campaign_test.py`
+  - `cd evals && uv run pytest -q tests/`
+  - `cd evals && uv run pytest -q tests/integration`
+
+Remaining from reviewer: none from iteration 1.

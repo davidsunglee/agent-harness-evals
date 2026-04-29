@@ -1,7 +1,9 @@
 import json
 import os
+import shutil
 import socket
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -192,3 +194,96 @@ def test_lock_context_manager_releases_on_exception(tmp_path):
         with lock(campaign_dir, argv=["test"]):
             raise ValueError("deliberate")
     assert not (campaign_dir / ".lock").exists()
+
+
+# --- atomicity regression tests ---
+
+def test_acquire_lock_concurrent_threads_only_one_winner(tmp_path):
+    """Regression: concurrent acquisitions must produce exactly one winner.
+
+    The previous implementation used a non-atomic exists-check followed by
+    temp+rename, which let two callers both observe no .lock and both
+    succeed in writing one. Acquisition must use an atomic exclusive
+    creation primitive so the kernel arbitrates the winner.
+    """
+    # Run several iterations to make the race observable on a non-atomic
+    # implementation. With an atomic-create implementation, every iteration
+    # passes deterministically.
+    for _ in range(20):
+        campaign_dir = tmp_path / "campaign"
+        if campaign_dir.exists():
+            shutil.rmtree(campaign_dir)
+        campaign_dir.mkdir()
+
+        barrier = threading.Barrier(2)
+        results: list[str] = []
+        results_lock = threading.Lock()
+
+        def worker():
+            barrier.wait()
+            try:
+                acquire_lock(campaign_dir, argv=["test"])
+                with results_lock:
+                    results.append("ok")
+            except LockBusyError:
+                with results_lock:
+                    results.append("busy")
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert sorted(results) == ["busy", "ok"], (
+            f"expected exactly one winner, got {results}"
+        )
+
+
+def test_acquire_lock_does_not_clobber_existing_lock_file(tmp_path, monkeypatch):
+    """Regression: even with a deliberately widened race window, a second
+    acquirer must not blindly overwrite an existing lock file.
+
+    Simulates the TOCTOU window between observing the lock state and
+    writing by patching ``Path.exists`` to release the GIL. With an atomic
+    O_EXCL-based implementation this patch is harmless; with the non-atomic
+    implementation it makes the second writer reliably clobber the first.
+    """
+    import time
+
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir()
+
+    original_exists = Path.exists
+
+    def slow_exists(self):
+        result = original_exists(self)
+        # Yield aggressively so a competing thread can interleave.
+        time.sleep(0.05)
+        return result
+
+    monkeypatch.setattr(Path, "exists", slow_exists)
+
+    barrier = threading.Barrier(2)
+    results: list[str] = []
+    results_lock = threading.Lock()
+
+    def worker():
+        barrier.wait()
+        try:
+            acquire_lock(campaign_dir, argv=["test"])
+            with results_lock:
+                results.append("ok")
+        except LockBusyError:
+            with results_lock:
+                results.append("busy")
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert sorted(results) == ["busy", "ok"], (
+        f"expected exactly one winner under widened race window, got {results}"
+    )
