@@ -12,7 +12,6 @@ import pytest
 
 import evals.pipeline as pipeline_module
 from evals.discovery import CaseSpec, FrameworkSpec, discover_cases
-from evals.env import build_test_env
 from evals.pipeline import (
     assemble_scoring,
     check_edit_constraints,
@@ -298,85 +297,67 @@ def test_visible_test_output_caps_and_drains(tmp_path):
     assert result.stdout_truncated is True
 
 
-def test_test_command_artifact_records_original_and_effective_command(tmp_path):
-    pytest_pkg = tmp_path / "pytest"
-    pytest_pkg.mkdir()
-    (pytest_pkg / "__init__.py").write_text("")
-    (pytest_pkg / "__main__.py").write_text("raise SystemExit(0)\n")
+def test_test_command_preserves_declared_shell_command_with_redirection(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    pytest_exe = bin_dir / "pytest"
+    pytest_exe.write_text("#!/bin/sh\nprintf 'from-shell:%s\\n' \"$*\"\n")
+    pytest_exe.chmod(0o755)
     output_path = tmp_path / "visible_test.json"
 
     result = run_test_command(
-        "pytest -q",
+        "pytest -q > shell-output.txt",
         cwd=tmp_path,
-        env={**os.environ, "PYTHONPATH": str(tmp_path)},
+        env={**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
         timeout_s=30,
         output_path=output_path,
     )
 
     payload = json.loads(output_path.read_text())
     assert result.outcome == "pass"
-    assert payload["original_command"] == "pytest -q"
-    assert payload["effective_command"] == "python -m pytest -q"
-    assert payload["command"] == "python -m pytest -q"
+    assert (tmp_path / "shell-output.txt").read_text() == "from-shell:-q\n"
+    assert payload["original_command"] == "pytest -q > shell-output.txt"
+    assert payload["effective_command"] == "pytest -q > shell-output.txt"
+    assert payload["command"] == "pytest -q > shell-output.txt"
 
 
-def test_pytest_rerun_uses_src_checkout_without_installing_project(tmp_path):
-    """Regression for src-layout/self-hosting fixtures under UV_NO_SYNC.
+def test_test_command_artifact_records_declared_command_as_effective(tmp_path):
+    output_path = tmp_path / "visible_test.json"
 
-    A no-install-project case venv does not have the project's `pytest` console
-    script. Harness reruns still need to execute the checked-out source package.
-    """
-    repo = tmp_path / "repo"
-    pytest_pkg = repo / "src" / "pytest"
-    pytest_pkg.mkdir(parents=True)
-    (repo / "pyproject.toml").write_text(
-        "[project]\n"
-        "name = 'src-layout-self-hosting-pytest'\n"
-        "version = '0.0.0'\n"
-        "requires-python = '>=3.11'\n"
-    )
-    (pytest_pkg / "__init__.py").write_text("")
-    (pytest_pkg / "__main__.py").write_text(
-        "import json\n"
-        "import sys\n"
-        "from pathlib import Path\n"
-        "Path('pytest-main-ran.json').write_text(json.dumps(sys.argv[1:]))\n"
-        "raise SystemExit(0)\n"
-    )
-    (repo / "sentinel_test.py").write_text(
-        "# not imported by the fake pytest entrypoint\n"
+    result = run_test_command(
+        "printf ok",
+        cwd=tmp_path,
+        env={**os.environ},
+        timeout_s=30,
+        output_path=output_path,
     )
 
-    venv = tmp_path / "case.venv"
-    subprocess.run(
-        [sys.executable, "-m", "venv", str(venv)],
-        check=True,
-        capture_output=True,
-    )
-    assert not (venv / "bin" / "pytest").exists()
+    payload = json.loads(output_path.read_text())
+    assert result.outcome == "pass"
+    assert payload["original_command"] == "printf ok"
+    assert payload["effective_command"] == "printf ok"
+    assert payload["command"] == "printf ok"
 
-    test_env = build_test_env(
-        case_venv_path=venv,
-        cell_repo_path=repo,
-        base_env={k: os.environ[k] for k in ("HOME", "PATH") if k in os.environ},
-    )
+
+def test_uv_run_pytest_command_is_executed_as_declared(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    uv_exe = bin_dir / "uv"
+    uv_exe.write_text("#!/bin/sh\nprintf '%s\\n' \"$*\" > uv-args.txt\n")
+    uv_exe.chmod(0o755)
 
     result = run_test_command(
         "uv run pytest -q sentinel_test.py",
-        cwd=repo,
-        env=test_env,
+        cwd=tmp_path,
+        env={**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
         timeout_s=30,
     )
 
     assert result.outcome == "pass"
     assert result.exit_code == 0
-    assert json.loads((repo / "pytest-main-ran.json").read_text()) == [
-        "-q",
-        "sentinel_test.py",
-    ]
-    assert not (venv / "bin" / "pytest").exists()
-    site_packages = next(venv.glob("lib/python*/site-packages"))
-    assert not list(site_packages.glob("src_layout_self_hosting_pytest-*.dist-info"))
+    assert (tmp_path / "uv-args.txt").read_text() == "run pytest -q sentinel_test.py\n"
+    assert result.original_command == "uv run pytest -q sentinel_test.py"
+    assert result.effective_command == "uv run pytest -q sentinel_test.py"
 
 
 # ---------------------------------------------------------------------------

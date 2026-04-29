@@ -10,15 +10,15 @@ from evals.workspace import ensure_case_venv
 
 
 @pytest.mark.integration
-def test_pytest_fixture_rerun_executes_source_without_project_install(
+def test_pytest_fixture_declared_python_module_command_executes_source_without_project_install(
     repo_root: Path,
     tmp_path: Path,
 ) -> None:
     """The real pytest fixture is src-layout and self-hosting.
 
     Its no-install-project venv intentionally lacks a `pytest` console script;
-    harness reruns must execute the checked-out `src/pytest` package without
-    installing the fixture into the shared venv.
+    cases that need the checked-out `src/pytest` package must declare that via
+    `python -m pytest` rather than relying on harness command rewriting.
     """
     fixture_dir = repo_root / "fixtures" / "pytest-dev__pytest-7571"
     cache_dir = tmp_path / "cache"
@@ -39,7 +39,7 @@ def test_pytest_fixture_rerun_executes_source_without_project_install(
     output_path = tmp_path / "pytest-version.json"
 
     result = run_test_command(
-        "uv run pytest --version",
+        "python -m pytest --version",
         cwd=fixture_dir,
         env=env,
         timeout_s=30,

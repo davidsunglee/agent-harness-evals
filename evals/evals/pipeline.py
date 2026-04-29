@@ -1,6 +1,5 @@
 import json
 import os
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -140,33 +139,6 @@ def _pump_capped_to_buffer(reader, buf: bytearray, cap: int, flag: list[bool]) -
             flag[0] = True
 
 
-def _normalize_pytest_command(command: str) -> str:
-    """Run pytest reruns through the case venv's Python, not a console script.
-
-    Case venvs are created with `uv sync --no-install-project`; self-hosting
-    projects such as pytest therefore do not provide their own `pytest` console
-    script in the shared venv. `python -m pytest` can still import the cell's
-    checked-out source via PYTHONPATH without syncing/installing the project.
-    """
-    try:
-        argv = shlex.split(command)
-    except ValueError:
-        return command
-
-    if not argv:
-        return command
-    if argv[0] == "pytest":
-        return shlex.join(["python", "-m", "pytest", *argv[1:]])
-    if (
-        len(argv) >= 3
-        and argv[0] == "uv"
-        and argv[1] == "run"
-        and argv[2] == "pytest"
-    ):
-        return shlex.join(["python", "-m", "pytest", *argv[3:]])
-    return command
-
-
 def run_test_command(
     command: str,
     *,
@@ -176,7 +148,7 @@ def run_test_command(
     output_path: Path | None = None,
 ) -> TestRunResult:
     original_command = command
-    effective_command = _normalize_pytest_command(command)
+    effective_command = command
     t0 = time.monotonic()
     proc = subprocess.Popen(
         ["/bin/sh", "-c", effective_command],
