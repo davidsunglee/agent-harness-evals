@@ -1,6 +1,7 @@
 import hashlib
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
@@ -25,6 +26,15 @@ def _fixture_rel_path(repo_root: Path, case_id: str, fixture_dir: Path | None = 
     return path.as_posix().rstrip("/")
 
 
+def _git_file_mode(path: Path) -> str:
+    st_mode = path.lstat().st_mode
+    if stat.S_ISLNK(st_mode):
+        return "120000"
+    if st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
+        return "100755"
+    return "100644"
+
+
 def compute_fixture_hash(
     repo_root: Path,
     case_id: str,
@@ -43,11 +53,15 @@ def compute_fixture_hash(
     entries = []
     for rel_bytes in tracked:
         rel = rel_bytes.decode()
-        file_hash = hashlib.sha256((repo_root / rel).read_bytes()).hexdigest()
-        entries.append((rel, file_hash))
+        file_path = repo_root / rel
+        mode = _git_file_mode(file_path)
+        file_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
+        entries.append((rel, mode, file_hash))
 
     entries.sort(key=lambda e: e[0])
-    buf = b"".join(f"{rel}\0{fhash}\n".encode() for rel, fhash in entries)
+    buf = b"".join(
+        f"{rel}\0{mode}\0{fhash}\n".encode() for rel, mode, fhash in entries
+    )
     return _blake2_hex(buf)
 
 

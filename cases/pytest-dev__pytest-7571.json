@@ -1,9 +1,9 @@
 {
   "case_id": "pytest-dev__pytest-7571",
   "fixture_repo": "fixtures/pytest-dev__pytest-7571",
-  "failing_test_command": "uv run pytest -q testing/logging/test_fixture.py::test_change_level_undos_handler_level",
+  "failing_test_command": "python -m pytest -q testing/logging/test_fixture.py::test_change_level_undos_handler_level",
   "failure_output_path": "cases/pytest-dev__pytest-7571.failure_output.txt",
-  "hidden_test_command": "uv run pytest -q testing/logging/test_fixture.py --deselect testing/logging/test_fixture.py::test_change_level_undos_handler_level",
+  "hidden_test_command": "python -m pytest -q testing/logging/test_fixture.py --deselect testing/logging/test_fixture.py::test_change_level_undos_handler_level",
   "edit_constraints": {
     "disallowed_paths": [
       "tests/**",

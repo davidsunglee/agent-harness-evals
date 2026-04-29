@@ -1,5 +1,6 @@
 import os
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
@@ -90,6 +91,17 @@ def test_compute_fixture_hash_excludes_untracked(tmp_path):
     hash2 = compute_fixture_hash(repo, case_id)
 
     assert hash1 == hash2
+
+
+def test_compute_fixture_hash_changes_when_tracked_file_mode_changes(tmp_path):
+    repo, case_id = _make_fixture_repo(tmp_path)
+    tracked_file = repo / "fixtures" / case_id / "main.py"
+
+    hash1 = compute_fixture_hash(repo, case_id)
+    tracked_file.chmod(tracked_file.stat().st_mode | stat.S_IXUSR)
+    hash2 = compute_fixture_hash(repo, case_id)
+
+    assert hash1 != hash2
 
 
 def test_compute_fixture_hash_uses_manifest_fixture_dir(tmp_path):

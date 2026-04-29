@@ -494,23 +494,23 @@ def cmd_eval(args) -> int:
     dotenv = load_dotenv(repo_root)
     cache_dir = repo_root / ".runs-cache"
 
-    if _prepare_needed(repo_root, [fw], [case], cache_dir):
-        prepare_result = _do_prepare(
-            repo_root=repo_root,
-            frameworks=[fw],
-            cases=[case],
-            cache_dir=cache_dir,
-            base_env=base_env,
-            dotenv=dotenv,
-            setup_timeout_s=600,
-        )
-        for line in prepare_result.summary:
-            print(line)
-        if prepare_result.case_failed:
-            print("aborting eval due to case prepare failure", file=sys.stderr)
-            return 1
-
     with lock(campaign_dir, argv=sys.argv, force_unlock=args.force_unlock):
+        if _prepare_needed(repo_root, [fw], [case], cache_dir):
+            prepare_result = _do_prepare(
+                repo_root=repo_root,
+                frameworks=[fw],
+                cases=[case],
+                cache_dir=cache_dir,
+                base_env=base_env,
+                dotenv=dotenv,
+                setup_timeout_s=600,
+            )
+            for line in prepare_result.summary:
+                print(line)
+            if prepare_result.case_failed:
+                print("aborting eval due to case prepare failure", file=sys.stderr)
+                return 1
+
         cell_dir = campaign_dir / fw.name / case.case_id
         if cell_dir.exists():
             shutil.rmtree(cell_dir)
