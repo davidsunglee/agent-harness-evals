@@ -1,5 +1,7 @@
 # Eval Harness Design
 
+Source: TODO-012985d7
+
 > **v3** — incorporates feedback from `.pi/specs/reviews/2026-04-28-eval-harness-design-v2-review.md`. v3-only rules are flagged inline as **(v3)** the first time they appear in a section. v2-only rules retain **(v2)**. The previous version is preserved at `.pi/specs/2026-04-28-eval-harness-design-v2.md`; v1 at `.pi/specs/2026-04-28-eval-harness-design.md`.
 
 ## Goal
