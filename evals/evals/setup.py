@@ -196,6 +196,7 @@ def _record_pre_exec_failure(
     stdout_log: Path,
     stderr_log: Path,
     fail_path: Path,
+    current_fingerprint: str,
     started_at: str,
     t0: float,
 ) -> "SetupResult":
@@ -211,6 +212,10 @@ def _record_pre_exec_failure(
         {
             "reason": reason,
             "exit_code": None,
+            "fingerprint": current_fingerprint,
+            "fingerprint_version": 1,
+            "hash": current_fingerprint,
+            "manifest_hash": _manifest_hash(spec),
             "stdout_truncated": False,
             "stderr_truncated": False,
             "started_at": started_at,
@@ -293,6 +298,7 @@ def run_framework_setup(
             stdout_log=stdout_log,
             stderr_log=stderr_log,
             fail_path=fail_path,
+            current_fingerprint=current_fingerprint,
             started_at=started_at,
             t0=t0,
         )
@@ -314,6 +320,7 @@ def run_framework_setup(
             stdout_log=stdout_log,
             stderr_log=stderr_log,
             fail_path=fail_path,
+            current_fingerprint=current_fingerprint,
             started_at=started_at,
             t0=t0,
         )
@@ -382,6 +389,10 @@ def run_framework_setup(
         {
             "reason": reason,
             "exit_code": exit_code,
+            "fingerprint": current_fingerprint,
+            "fingerprint_version": 1,
+            "hash": current_fingerprint,
+            "manifest_hash": _manifest_hash(spec),
             "stdout_truncated": stdout_truncated,
             "stderr_truncated": stderr_truncated,
             "started_at": started_at,

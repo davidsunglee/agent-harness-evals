@@ -133,13 +133,22 @@ def _prepare_needed(repo_root: Path, frameworks, cases, cache_dir: Path) -> bool
         setup_dir = cache_dir / "setup"
         ok_path = setup_dir / f"{fw.name}.ok"
         fail_path = setup_dir / f"{fw.name}.fail"
-        if fail_path.exists():
+        try:
+            current_fingerprint = setup_fingerprint(fw)
+        except Exception:
             return True
+        if fail_path.exists():
+            try:
+                data = json.loads(fail_path.read_text())
+            except Exception:
+                return True
+            if (data.get("fingerprint") or data.get("hash")) != current_fingerprint:
+                return True
+            continue
         if not ok_path.exists():
             return True
         try:
             data = json.loads(ok_path.read_text())
-            current_fingerprint = setup_fingerprint(fw)
         except Exception:
             return True
         if (data.get("fingerprint") or data.get("hash")) != current_fingerprint:

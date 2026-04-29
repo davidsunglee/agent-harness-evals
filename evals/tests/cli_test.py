@@ -324,6 +324,27 @@ def _make_repo_with_cached_setup(tmp_path: Path) -> tuple[Path, Path]:
     return repo, cache
 
 
+def test_prepare_needed_false_when_framework_setup_fail_is_fresh(
+    tmp_path: Path,
+) -> None:
+    repo, cache = _make_repo_with_cached_setup(tmp_path)
+    setup_dir = cache / "setup"
+    (setup_dir / "setup-fw.ok").unlink()
+    frameworks, _ = discover_frameworks(repo)
+    (setup_dir / "setup-fw.fail").write_text(
+        json.dumps(
+            {
+                "reason": "nonzero_exit",
+                "fingerprint": cli.setup_fingerprint(frameworks[0]),
+            }
+        )
+    )
+
+    assert cli._prepare_needed(repo, frameworks, [], cache) is False, (
+        "eval-all must honor a fresh .fail sentinel instead of rerunning framework setup"
+    )
+
+
 def test_prepare_needed_true_when_framework_setup_script_is_stale(
     tmp_path: Path,
 ) -> None:

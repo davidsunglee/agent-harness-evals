@@ -79,6 +79,7 @@ def test_run_framework_setup_writes_fail_on_exit_nonzero(tmp_path):
     assert (cache_dir / "setup" / f"{spec.name}.fail").exists()
     fail_data = json.loads((cache_dir / "setup" / f"{spec.name}.fail").read_text())
     assert fail_data["exit_code"] == 7
+    assert fail_data["fingerprint"] == setup_mod.setup_fingerprint(spec)
     assert not (cache_dir / "setup" / f"{spec.name}.ok").exists()
 
 
