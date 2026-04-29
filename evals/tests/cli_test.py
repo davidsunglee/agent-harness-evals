@@ -503,6 +503,46 @@ def test_eval_all_aborts_nonzero_when_case_prepare_fails(
     assert "case case-001: bare-repo FAIL" in out
 
 
+def test_prepare_summary_includes_uv_sync_stderr_on_case_venv_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    _write_good_case(repo, fixture)
+    cases, errors = discover_cases(repo)
+    assert errors == []
+    cache = repo / ".runs-cache"
+
+    def create_bare_repo(_repo_root, case_id, cache_dir, _fixture_repo):
+        bare_repo = cache_dir / f"{case_id}.git"
+        bare_repo.mkdir(parents=True, exist_ok=True)
+        return bare_repo
+
+    def fail_venv(_repo_root, _case_id, _fixture_repo, _cache_dir):
+        raise WorkspaceError("uv sync failed", stderr="No solution found for dependencies\n")
+
+    monkeypatch.setattr(cli, "ensure_case_bare_repo", create_bare_repo)
+    monkeypatch.setattr(cli, "ensure_case_venv", fail_venv)
+
+    result = cli._do_prepare(
+        repo_root=repo,
+        frameworks=[],
+        cases=cases,
+        cache_dir=cache,
+        base_env={},
+        dotenv={},
+        setup_timeout_s=30,
+    )
+
+    assert result.failed is True
+    assert result.case_failed is True
+    assert result.summary == [
+        "case case-001: venv FAIL: uv sync failed: No solution found for dependencies"
+    ]
+
+
 def test_eval_all_continues_after_framework_setup_failure(
     tmp_path: Path, monkeypatch
 ) -> None:

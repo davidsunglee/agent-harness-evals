@@ -9,6 +9,7 @@ CASE_OPTIONAL = {"failure_output", "failure_output_path", "hidden_test_command",
 ENVELOPE_REQUIRED = {"task_id", "output", "trace", "error"}
 TRACE_REQUIRED = {"steps", "tokens", "latency_ms"}
 OUTPUT_REQUIRED = {"root_cause", "summary", "changed_files", "tests_run", "evidence", "confidence"}
+CASE_ID_PATTERN = r"^(?!\.{1,2}$)[a-zA-Z0-9_.-]+$"
 
 
 def validate_framework_manifest(obj: object) -> list[str]:
@@ -69,13 +70,14 @@ def validate_case_manifest(obj: object) -> list[str]:
     for key in unknown_keys:
         errors.append(f"unknown key: {key}")
 
-    # Validate case_id format
+    # Validate case_id format. Case IDs are used as artifact directory names,
+    # so keep them to a single safe path segment.
     if "case_id" in obj:
         case_id = obj["case_id"]
         if not isinstance(case_id, str):
             errors.append("case_id must be a string")
-        elif not re.match(r"^[a-zA-Z0-9_.\-/]+$", case_id):
-            errors.append(r"case_id must match pattern ^[a-zA-Z0-9_.\-/]+$")
+        elif not re.fullmatch(CASE_ID_PATTERN, case_id):
+            errors.append(f"case_id must match pattern {CASE_ID_PATTERN}")
 
     # Validate fixture_repo
     if "fixture_repo" in obj:
@@ -94,6 +96,10 @@ def validate_case_manifest(obj: object) -> list[str]:
         errors.append("cannot have both failure_output and failure_output_path")
     elif not has_failure_output and not has_failure_output_path:
         errors.append("must have exactly one of failure_output or failure_output_path")
+    if has_failure_output and not isinstance(obj["failure_output"], str):
+        errors.append("failure_output must be a string")
+    if has_failure_output_path and not isinstance(obj["failure_output_path"], str):
+        errors.append("failure_output_path must be a string")
 
     # Validate edit_constraints if present
     if "edit_constraints" in obj:

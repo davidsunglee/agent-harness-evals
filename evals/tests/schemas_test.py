@@ -48,6 +48,20 @@ def test_valid_case_manifest_passes():
     assert validate_case_manifest(manifest) == []
 
 
+@pytest.mark.parametrize("case_id", ["nested/case", "../escape", "/tmp/escape", ".", ".."])
+def test_case_manifest_rejects_path_like_case_ids(case_id):
+    manifest = {
+        "case_id": case_id,
+        "fixture_repo": "fixtures/test_case_1",
+        "failing_test_command": "pytest test.py",
+        "failure_output": "",
+    }
+
+    errors = validate_case_manifest(manifest)
+
+    assert any("case_id" in error for error in errors)
+
+
 def test_case_manifest_both_failure_outputs_fails():
     manifest = {
         "case_id": "test_case_1",

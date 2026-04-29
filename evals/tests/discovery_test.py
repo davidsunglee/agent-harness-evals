@@ -225,6 +225,38 @@ def test_discover_cases_missing_failure_output_path_is_structured_error(
     assert any("failure_output_path" in m for m in errors[0].messages)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("failure_output", ["not", "a", "string"]), ("failure_output_path", 123)],
+)
+def test_discover_cases_reports_non_string_failure_output_fields(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    repo = _isolated_repo_root(tmp_path)
+    fixture_dir = tmp_path / "fixture"
+    fixture_dir.mkdir()
+    _write_case(
+        repo,
+        f"case-bad-{field}",
+        {
+            "case_id": f"case-bad-{field}",
+            "fixture_repo": str(fixture_dir),
+            "failing_test_command": "pytest",
+            field: value,
+        },
+    )
+
+    try:
+        specs, errors = discover_cases(repo)
+    except TypeError as exc:
+        pytest.fail(f"discovery crashed instead of returning a structured error: {exc}")
+
+    assert specs == []
+    assert len(errors) == 1
+    assert errors[0].kind == "case"
+    assert any(f"{field} must be a string" in message for message in errors[0].messages)
+
+
 def test_discover_cases_handles_missing_executable_entry(tmp_path: Path) -> None:
     """A non-executable framework entry produces a FrameworkSpec, not a DiscoveryError."""
     repo = _isolated_repo_root(tmp_path)

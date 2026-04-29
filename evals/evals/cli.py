@@ -57,6 +57,18 @@ def _report_case_discovery_errors(errors) -> bool:
     return True
 
 
+def _prepare_exception_message(exc: Exception) -> str:
+    message = str(exc)
+    stderr = getattr(exc, "stderr", "")
+    if isinstance(stderr, str):
+        stderr = stderr.strip()
+    else:
+        stderr = ""
+    if stderr:
+        return f"{message}: {stderr}"
+    return message
+
+
 @dataclass(frozen=True)
 class _PrepareResult:
     summary: list[str]
@@ -185,7 +197,9 @@ def _do_prepare(
         except Exception as exc:
             failed = True
             case_failed = True
-            summary.append(f"case {case.case_id}: bare-repo FAIL: {exc}")
+            summary.append(
+                f"case {case.case_id}: bare-repo FAIL: {_prepare_exception_message(exc)}"
+            )
             continue
         try:
             ensure_case_venv(repo_root, case.case_id, case.fixture_repo, cache_dir)
@@ -193,7 +207,9 @@ def _do_prepare(
         except Exception as exc:
             failed = True
             case_failed = True
-            summary.append(f"case {case.case_id}: venv FAIL: {exc}")
+            summary.append(
+                f"case {case.case_id}: venv FAIL: {_prepare_exception_message(exc)}"
+            )
 
     for fw in frameworks:
         if fw.discovery_error is not None:
