@@ -78,7 +78,11 @@ def ensure_case_bare_repo(
     hash_file = cache_dir / f"{case_id}.fixture-hash"
     bare_dir = cache_dir / f"{case_id}.git"
 
-    if hash_file.exists() and hash_file.read_text().strip() == fixture_hash:
+    if (
+        hash_file.exists()
+        and hash_file.read_text().strip() == fixture_hash
+        and bare_dir.exists()
+    ):
         return bare_dir
 
     if bare_dir.exists():
@@ -149,7 +153,11 @@ def ensure_case_venv(
     hash_file = cache_dir / f"{case_id}.lock-hash"
     venv_dir = cache_dir / f"{case_id}.venv"
 
-    if hash_file.exists() and hash_file.read_text().strip() == lock_hash:
+    if (
+        hash_file.exists()
+        and hash_file.read_text().strip() == lock_hash
+        and venv_dir.exists()
+    ):
         return venv_dir
 
     if venv_dir.exists():

@@ -250,14 +250,32 @@ def run_cell(
 
     argv = shlex.split(framework.entry)
     t0 = time.monotonic()
-    proc = subprocess.Popen(
-        argv,
-        cwd=str(framework.dir),
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=agent_env,
-    )
+    try:
+        proc = subprocess.Popen(
+            argv,
+            cwd=str(framework.dir),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=agent_env,
+        )
+    except OSError as exc:
+        misconfig_reason = f"failed to spawn entry: {exc}"
+        stdout_path.write_bytes(b"")
+        stderr_path.write_text(f"framework_misconfigured: {misconfig_reason}\n")
+        return RunnerResult(
+            task_id=task_id,
+            exit_code=None,
+            timed_out=False,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            stdout_truncated=False,
+            stderr_truncated=False,
+            response_path=None,
+            error_reason="framework_misconfigured",
+            latency_ms=0,
+            framework_misconfigured_reason=misconfig_reason,
+        )
 
     # Send request, then close stdin.
     try:

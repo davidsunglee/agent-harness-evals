@@ -202,6 +202,49 @@ def test_runner_noisy_stderr_truncates(fake_framework_dir, tmp_path):
     assert (cell_dir / "stderr.log").stat().st_size == 5 * 1024 * 1024
 
 
+def test_runner_misconfigured_when_entry_executable_but_unspawnable(tmp_path):
+    fw_dir = tmp_path / "bad-fw"
+    fw_dir.mkdir()
+    bad_entry = fw_dir / "bad-entry"
+    bad_entry.write_text("#!/definitely/missing/interpreter\n")
+    bad_entry.chmod(0o755)
+    fw = FrameworkSpec(
+        name="bad-fw",
+        dir=fw_dir,
+        manifest_path=fw_dir / "manifest.json",
+        entry="./bad-entry",
+        setup=None,
+        env_keys=[],
+        model="fake",
+    )
+    case = _make_case(tmp_path)
+    cell_dir = tmp_path / "cell"
+    cell_dir.mkdir()
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    try:
+        result = run_cell(
+            framework=fw,
+            case=case,
+            effective_config=_effective(),
+            cell_dir=cell_dir,
+            cache_dir=cache_dir,
+            repo_root=tmp_path,
+            base_env=BASE_ENV,
+            dotenv=DOTENV,
+        )
+    except OSError as exc:
+        pytest.fail(f"run_cell should classify unspawnable entries, not raise: {exc}")
+
+    assert result.error_reason == "framework_misconfigured"
+    assert result.framework_misconfigured_reason is not None
+    assert "failed to spawn entry" in result.framework_misconfigured_reason
+    assert result.exit_code is None
+    assert (cell_dir / "stdout.log").stat().st_size == 0
+    assert "framework_misconfigured" in (cell_dir / "stderr.log").read_text()
+
+
 def test_runner_misconfigured_when_entry_missing(tmp_path):
     fw_dir = tmp_path / "missing-fw"
     fw_dir.mkdir()

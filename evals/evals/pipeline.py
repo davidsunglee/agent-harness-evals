@@ -420,9 +420,9 @@ def run_pipeline(
     base_env: dict[str, str],
     venv_hash_before: str,
 ) -> None:
-    ended_at_dt = datetime.now(timezone.utc)
+    pipeline_started_at_dt = datetime.now(timezone.utc)
     started_at_dt = datetime.fromtimestamp(
-        ended_at_dt.timestamp() - (runner_result.latency_ms / 1000.0),
+        pipeline_started_at_dt.timestamp() - (runner_result.latency_ms / 1000.0),
         tz=timezone.utc,
     )
 
@@ -515,6 +515,8 @@ def run_pipeline(
         status = "ok"
     else:
         status = "error"
+
+    ended_at_dt = datetime.now(timezone.utc)
 
     write_meta_json(
         cell_dir,

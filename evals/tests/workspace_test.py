@@ -169,6 +169,20 @@ def test_ensure_case_bare_repo_reuses_when_hash_matches(tmp_path):
     assert (bare2 / "HEAD").stat().st_mtime == head_mtime, "second call should not rebuild"
 
 
+def test_ensure_case_bare_repo_rebuilds_when_hash_file_matches_but_repo_missing(tmp_path):
+    repo, case_id = _make_fixture_repo(tmp_path)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    bare = ensure_case_bare_repo(repo, case_id, cache)
+    shutil.rmtree(bare)
+
+    rebuilt = ensure_case_bare_repo(repo, case_id, cache)
+
+    assert rebuilt == bare
+    assert (rebuilt / "HEAD").exists()
+
+
 def test_ensure_case_bare_repo_rebuilds_when_hash_changes(tmp_path):
     repo, case_id = _make_fixture_repo(tmp_path)
     cache = tmp_path / "cache"
@@ -184,6 +198,37 @@ def test_ensure_case_bare_repo_rebuilds_when_hash_changes(tmp_path):
     head_mtime2 = (cache / f"{case_id}.git" / "HEAD").stat().st_mtime
 
     assert head_mtime1 != head_mtime2, "second call should rebuild when hash changes"
+
+
+def test_ensure_case_venv_rebuilds_when_hash_file_matches_but_venv_missing(tmp_path, monkeypatch):
+    fixture_dir = tmp_path / "fixture"
+    fixture_dir.mkdir()
+    (fixture_dir / "pyproject.toml").write_text(
+        "[project]\nname = 'fixture'\nversion = '0.0.0'\nrequires-python = '>=3.11'\n"
+    )
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    lock_hash = compute_lock_hash(fixture_dir)
+    (cache / "case.lock-hash").write_text(lock_hash)
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, *, cwd, env, capture_output, text):
+        calls.append(cmd)
+        Path(env["UV_PROJECT_ENVIRONMENT"]).mkdir(parents=True)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    venv = ensure_case_venv(
+        repo_root=tmp_path,
+        case_id="case",
+        fixture_dir=fixture_dir,
+        cache_dir=cache,
+    )
+
+    assert venv == cache / "case.venv"
+    assert venv.exists()
+    assert calls == [["uv", "sync", "--no-install-project"]]
 
 
 def test_ensure_case_bare_repo_uses_manifest_fixture_dir(tmp_path):

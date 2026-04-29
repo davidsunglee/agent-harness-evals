@@ -3,10 +3,12 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
+import evals.pipeline as pipeline_module
 from evals.discovery import CaseSpec, FrameworkSpec
 from evals.env import build_test_env
 from evals.pipeline import (
@@ -413,6 +415,48 @@ def test_meta_json_is_atomic_temp_and_rename(tmp_path, monkeypatch):
     assert dst.endswith("/meta.json")
     assert (cell_dir / "meta.json").exists()
     assert (cell_dir / "scoring.json").exists()
+
+
+def test_meta_ended_at_is_captured_after_pipeline_steps(tmp_path, monkeypatch):
+    class FakeDateTime:
+        calls = 0
+
+        @classmethod
+        def now(cls, tz):
+            instants = [
+                datetime(2024, 1, 1, 0, 0, 0, tzinfo=tz),
+                datetime(2024, 1, 1, 0, 0, 1, tzinfo=tz),
+            ]
+            instant = instants[min(cls.calls, len(instants) - 1)]
+            cls.calls += 1
+            return instant
+
+        @classmethod
+        def fromtimestamp(cls, timestamp, tz):
+            return datetime.fromtimestamp(timestamp, tz=tz)
+
+    monkeypatch.setattr(pipeline_module, "datetime", FakeDateTime)
+
+    cell_dir = _make_buggy_worktree(tmp_path)
+    _apply_fix(cell_dir)
+    case = _make_case(hidden_test_command=None)
+    fw = _make_framework(tmp_path)
+    cfg = _make_effective_config()
+    rr = _make_runner_result(cell_dir)
+
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    run_pipeline(
+        cell_dir, rr,
+        framework=fw, case=case, effective_config=cfg,
+        cache_dir=cache_dir, base_env=dict(os.environ),
+        venv_hash_before="ZZZ",
+    )
+
+    meta = json.loads((cell_dir / "meta.json").read_text())
+    assert meta["ended_at"] == "2024-01-01T00:00:01+00:00"
+    assert FakeDateTime.calls >= 2
 
 
 def test_meta_json_records_per_field_config_sources(tmp_path):
