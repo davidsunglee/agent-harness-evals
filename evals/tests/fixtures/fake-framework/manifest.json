@@ -1,0 +1,5 @@
+{
+  "entry": "./run.py",
+  "env": ["FAKE_BEHAVIOR"],
+  "model": "fake"
+}

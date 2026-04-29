@@ -1,0 +1,18 @@
+Using CPython 3.12.13
+Creating virtual environment at: .venv
+   Building test-case-001 @ file:///Users/david/Code/urban-winner/.worktrees/2026-04-28-eval-harness-design-v3/evals/tests/fixtures/cases/test-case-001
+      Built test-case-001 @ file:///Users/david/Code/urban-winner/.worktrees/2026-04-28-eval-harness-design-v3/evals/tests/fixtures/cases/test-case-001
+Installed 6 packages in 5ms
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______________________________ test_add_positive _______________________________
+
+    def test_add_positive():
+>       assert add(2, 3) == 5
+E       assert -1 == 5
+E        +  where -1 = add(2, 3)
+
+tests/test_arith.py:5: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_arith.py::test_add_positive - assert -1 == 5
+1 failed in 0.01s
