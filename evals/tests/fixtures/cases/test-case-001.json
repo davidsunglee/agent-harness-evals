@@ -1,0 +1,9 @@
+{
+  "case_id": "test-case-001",
+  "fixture_repo": "evals/tests/fixtures/cases/test-case-001",
+  "failing_test_command": "uv run pytest -q tests/test_arith.py",
+  "failure_output_path": "evals/tests/fixtures/cases/test-case-001.failure_output.txt",
+  "hidden_test_command": "uv run pytest -q tests/test_arith_extended.py",
+  "edit_constraints": {},
+  "notes": "Synthetic case for harness self-tests; bug in test_case_001/arith.py."
+}

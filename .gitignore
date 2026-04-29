@@ -24,7 +24,8 @@ build/
 .DS_Store
 
 # Eval output
-results/
+.runs-cache/
+runs/
 *.log
 
 # Local worktrees
