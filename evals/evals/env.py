@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -19,6 +20,11 @@ def _build_path(venv: Path | None, inherited_path: str) -> str:
     if venv is None:
         return inherited_path
     return f"{venv.resolve()}/bin:{inherited_path}"
+
+
+def _build_pythonpath(cell_repo_path: Path) -> str:
+    repo = cell_repo_path.resolve()
+    return os.pathsep.join([str(repo / "src"), str(repo)])
 
 
 def build_agent_env(
@@ -61,7 +67,7 @@ def build_test_env(
     # the venv-mutation invariant. Pin the venv read-only and surface the
     # cell's checked-out source via PYTHONPATH instead.
     out["UV_NO_SYNC"] = "1"
-    out["PYTHONPATH"] = str(cell_repo_path.resolve())
+    out["PYTHONPATH"] = _build_pythonpath(cell_repo_path)
     # No declared framework keys — test reruns are deterministic and never see secrets.
     return out
 

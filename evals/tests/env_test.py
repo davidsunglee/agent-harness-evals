@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -105,17 +106,19 @@ def test_test_env_disables_uv_sync(tmp_path):
     assert env["UV_NO_SYNC"] == "1"
 
 
-def test_test_env_pythonpath_points_at_cell_repo(tmp_path):
+def test_test_env_pythonpath_points_at_src_and_cell_repo(tmp_path):
     # The case venv is built with `--no-install-project`, so the project is not
-    # importable from site-packages. Tests must be able to import the cell's
-    # checked-out source via PYTHONPATH instead.
+    # importable from site-packages. Tests must be able to import both src-layout
+    # and flat-layout checked-out source via PYTHONPATH instead.
     repo = tmp_path / "repo"
     env = build_test_env(
         case_venv_path=tmp_path / "v",
         cell_repo_path=repo,
         base_env={"PATH": "/usr/bin"},
     )
-    assert env["PYTHONPATH"] == str(repo.resolve())
+    assert env["PYTHONPATH"] == os.pathsep.join(
+        [str(repo.resolve() / "src"), str(repo.resolve())]
+    )
 
 
 def test_setup_env_does_not_include_uv_project_environment():

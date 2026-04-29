@@ -2,11 +2,13 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from evals.discovery import CaseSpec, FrameworkSpec
+from evals.env import build_test_env
 from evals.pipeline import (
     assemble_scoring,
     check_edit_constraints,
@@ -246,6 +248,65 @@ def test_visible_test_output_caps_and_drains(tmp_path):
     )
     assert result.outcome == "pass"
     assert result.stdout_truncated is True
+
+
+def test_pytest_rerun_uses_src_checkout_without_installing_project(tmp_path):
+    """Regression for src-layout/self-hosting fixtures under UV_NO_SYNC.
+
+    A no-install-project case venv does not have the project's `pytest` console
+    script. Harness reruns still need to execute the checked-out source package.
+    """
+    repo = tmp_path / "repo"
+    pytest_pkg = repo / "src" / "pytest"
+    pytest_pkg.mkdir(parents=True)
+    (repo / "pyproject.toml").write_text(
+        "[project]\n"
+        "name = 'src-layout-self-hosting-pytest'\n"
+        "version = '0.0.0'\n"
+        "requires-python = '>=3.11'\n"
+    )
+    (pytest_pkg / "__init__.py").write_text("")
+    (pytest_pkg / "__main__.py").write_text(
+        "import json\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "Path('pytest-main-ran.json').write_text(json.dumps(sys.argv[1:]))\n"
+        "raise SystemExit(0)\n"
+    )
+    (repo / "sentinel_test.py").write_text(
+        "# not imported by the fake pytest entrypoint\n"
+    )
+
+    venv = tmp_path / "case.venv"
+    subprocess.run(
+        [sys.executable, "-m", "venv", str(venv)],
+        check=True,
+        capture_output=True,
+    )
+    assert not (venv / "bin" / "pytest").exists()
+
+    test_env = build_test_env(
+        case_venv_path=venv,
+        cell_repo_path=repo,
+        base_env={k: os.environ[k] for k in ("HOME", "PATH") if k in os.environ},
+    )
+
+    result = run_test_command(
+        "uv run pytest -q sentinel_test.py",
+        cwd=repo,
+        env=test_env,
+        timeout_s=30,
+    )
+
+    assert result.outcome == "pass"
+    assert result.exit_code == 0
+    assert json.loads((repo / "pytest-main-ran.json").read_text()) == [
+        "-q",
+        "sentinel_test.py",
+    ]
+    assert not (venv / "bin" / "pytest").exists()
+    site_packages = next(venv.glob("lib/python*/site-packages"))
+    assert not list(site_packages.glob("src_layout_self_hosting_pytest-*.dist-info"))
 
 
 # ---------------------------------------------------------------------------
