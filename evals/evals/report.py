@@ -16,6 +16,7 @@ def render_report(campaign_dir: Path) -> str:
 
     ts = campaign_dir.name
     frameworks: list[str] = manifest["frameworks"]
+    framework_set = set(frameworks)
     cases: list[str] = manifest["cases"]
     config_overrides: dict = manifest.get("config_overrides", {})
 
@@ -139,6 +140,8 @@ def render_report(campaign_dir: Path) -> str:
     if setup_dir.exists():
         for fail_file in sorted(setup_dir.glob("*.fail")):
             fw_name = fail_file.stem
+            if fw_name not in framework_set:
+                continue
             stderr_abs = setup_dir / f"{fw_name}.stderr.log"
             stderr_rel = os.path.relpath(stderr_abs, campaign_dir)
             lines.append(f"- setup failure: {fw_name} — [{stderr_rel}]({stderr_rel})")

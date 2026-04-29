@@ -178,10 +178,22 @@ def test_render_report_lists_setup_failures(synthetic_campaign: Path) -> None:
     repo_root = synthetic_campaign.parent.parent
     setup_dir = repo_root / ".runs-cache" / "setup"
     setup_dir.mkdir(parents=True)
-    (setup_dir / "x.fail").write_text('{"reason": "nonzero_exit"}')
+    (setup_dir / "fw1.fail").write_text('{"reason": "nonzero_exit"}')
 
     report = render_report(synthetic_campaign)
-    assert ".runs-cache/setup/x.stderr.log" in report
+    assert ".runs-cache/setup/fw1.stderr.log" in report
+
+
+def test_render_report_ignores_setup_failures_outside_manifest(synthetic_campaign: Path) -> None:
+    repo_root = synthetic_campaign.parent.parent
+    setup_dir = repo_root / ".runs-cache" / "setup"
+    setup_dir.mkdir(parents=True)
+    (setup_dir / "fw1.fail").write_text('{"reason": "nonzero_exit"}')
+    (setup_dir / "not-in-campaign.fail").write_text('{"reason": "nonzero_exit"}')
+
+    report = render_report(synthetic_campaign)
+    assert ".runs-cache/setup/fw1.stderr.log" in report
+    assert "not-in-campaign" not in report
 
 
 def test_render_report_lists_venv_mutations(synthetic_campaign: Path) -> None:

@@ -1,5 +1,7 @@
 import json
 import os
+import shlex
+import sys
 import time
 from pathlib import Path
 
@@ -92,6 +94,36 @@ def test_run_framework_setup_timeout(tmp_path):
     fail_data = json.loads((cache_dir / "setup" / f"{spec.name}.fail").read_text())
     assert fail_data["reason"] == "timeout"
     assert not (cache_dir / "setup" / f"{spec.name}.ok").exists()
+
+
+def test_run_framework_setup_returns_when_background_descendant_holds_stdout_pipe(tmp_path):
+    spec = make_spec(
+        tmp_path,
+        setup=shlex.join(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import subprocess, sys; "
+                    "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(4)']); "
+                    "raise SystemExit(0)"
+                ),
+            ]
+        ),
+        name="pipe-holder-setup",
+    )
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    start = time.monotonic()
+    result = run_framework_setup(
+        spec, cache_dir=cache_dir, base_env=BASE_ENV, dotenv=DOTENV, timeout_s=1
+    )
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 2.5, "setup should not wait for a pipe-holding background child"
+    assert result.status == "ok"
+    assert result.exit_code == 0
 
 
 def test_run_framework_setup_timeout_terminates_process_tree(tmp_path, process_tree_probe):

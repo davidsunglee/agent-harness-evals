@@ -1,6 +1,7 @@
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -156,7 +157,9 @@ def _resolve_edit_constraints(case_constraints: dict) -> dict:
     return out
 
 
-def _entry_is_runnable(framework: FrameworkSpec) -> tuple[bool, str | None]:
+def _entry_is_runnable(
+    framework: FrameworkSpec, *, path: str | None = None
+) -> tuple[bool, str | None]:
     try:
         argv = shlex.split(framework.entry)
     except ValueError as exc:
@@ -165,12 +168,19 @@ def _entry_is_runnable(framework: FrameworkSpec) -> tuple[bool, str | None]:
         return False, "entry is empty"
     exe = argv[0]
     exe_path = Path(exe)
-    if not exe_path.is_absolute():
-        exe_path = (framework.dir / exe).resolve()
-    if not exe_path.is_file():
-        return False, f"entry not found: {exe_path}"
-    if not os.access(exe_path, os.X_OK):
-        return False, f"entry not executable: {exe_path}"
+    has_path_separator = "/" in exe or (os.altsep is not None and os.altsep in exe)
+    if exe_path.is_absolute() or has_path_separator:
+        if not exe_path.is_absolute():
+            exe_path = (framework.dir / exe).resolve()
+        if not exe_path.is_file():
+            return False, f"entry not found: {exe_path}"
+        if not os.access(exe_path, os.X_OK):
+            return False, f"entry not executable: {exe_path}"
+        return True, None
+
+    resolved = shutil.which(exe, path=path)
+    if resolved is None:
+        return False, f"entry not found on PATH: {exe}"
     return True, None
 
 
@@ -191,6 +201,14 @@ def run_cell(
     response_path = cell_dir / "response.json"
     task_id = f"{framework.name}:{case.case_id}:{uuid4().hex[:8]}"
 
+    case_venv_path = cache_dir / f"{case.case_id}.venv"
+    agent_env = build_agent_env(
+        declared_keys=framework.env_keys,
+        case_venv_path=case_venv_path,
+        base_env=base_env,
+        dotenv=dotenv,
+    )
+
     # Pre-check framework misconfiguration.
     misconfig_reason: str | None = None
     if framework.discovery_error is not None:
@@ -198,7 +216,7 @@ def run_cell(
             "manifest invalid: " + "; ".join(framework.discovery_error.messages)
         )
     else:
-        runnable, reason = _entry_is_runnable(framework)
+        runnable, reason = _entry_is_runnable(framework, path=agent_env.get("PATH"))
         if not runnable:
             misconfig_reason = reason
         elif framework.setup is not None and is_setup_failed(framework.name, cache_dir):
@@ -239,14 +257,6 @@ def run_cell(
     }
     request_json = json.dumps(request, sort_keys=True, indent=2)
     (cell_dir / "request.json").write_text(request_json)
-
-    case_venv_path = cache_dir / f"{case.case_id}.venv"
-    agent_env = build_agent_env(
-        declared_keys=framework.env_keys,
-        case_venv_path=case_venv_path,
-        base_env=base_env,
-        dotenv=dotenv,
-    )
 
     argv = shlex.split(framework.entry)
     t0 = time.monotonic()
@@ -317,6 +327,11 @@ def run_cell(
         proc.wait(timeout=remaining_timeout())
     except subprocess.TimeoutExpired:
         timed_out = True
+        terminate_process_tree(proc, KILL_GRACE_S)
+    else:
+        # The adapter process can exit while background descendants keep inherited
+        # stdout/stderr/stdin pipes open. Clean up the isolated process group before
+        # joining pump threads so artifact collection stays bounded by the harness.
         terminate_process_tree(proc, KILL_GRACE_S)
 
     if not timed_out:

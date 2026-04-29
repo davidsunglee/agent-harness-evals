@@ -338,6 +338,11 @@ def run_framework_setup(
     except subprocess.TimeoutExpired:
         timed_out = True
         terminate_process_tree(proc, 5)
+    else:
+        # Setup commands may spawn background descendants that inherit the
+        # captured pipes. Kill any remaining process-group members before
+        # joining pump threads so stale pipe holders cannot hang setup.
+        terminate_process_tree(proc, 5)
 
     t1.join()
     t2.join()

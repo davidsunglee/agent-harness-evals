@@ -35,7 +35,9 @@ _DEFAULT_MAX_CHANGED_FILES = 5
 
 @dataclass(frozen=True)
 class TestRunResult:
-    command: str
+    command: str  # effective command executed by the harness
+    original_command: str
+    effective_command: str
     exit_code: int | None
     outcome: str  # "pass" | "fail" | "error"
     stdout_truncated: bool
@@ -173,10 +175,11 @@ def run_test_command(
     timeout_s: int,
     output_path: Path | None = None,
 ) -> TestRunResult:
-    command = _normalize_pytest_command(command)
+    original_command = command
+    effective_command = _normalize_pytest_command(command)
     t0 = time.monotonic()
     proc = subprocess.Popen(
-        ["/bin/sh", "-c", command],
+        ["/bin/sh", "-c", effective_command],
         cwd=str(cwd),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -208,6 +211,11 @@ def run_test_command(
     except subprocess.TimeoutExpired:
         timed_out = True
         terminate_process_tree(proc, KILL_GRACE_S)
+    else:
+        # A shell/test can exit while background descendants keep inherited
+        # stdout/stderr pipes open. Clean up the process group before joining
+        # pump threads so timeout enforcement cannot be bypassed by open pipes.
+        terminate_process_tree(proc, KILL_GRACE_S)
 
     t1.join()
     t2.join()
@@ -225,7 +233,9 @@ def run_test_command(
         outcome = "fail"
 
     result = TestRunResult(
-        command=command,
+        command=effective_command,
+        original_command=original_command,
+        effective_command=effective_command,
         exit_code=exit_code,
         outcome=outcome,
         stdout_truncated=stdout_t[0],
@@ -237,7 +247,9 @@ def run_test_command(
         _atomic_write_json(
             output_path,
             {
-                "command": command,
+                "command": effective_command,
+                "original_command": original_command,
+                "effective_command": effective_command,
                 "exit_code": exit_code,
                 "outcome": outcome,
                 "stdout": stdout_buf.decode("utf-8", errors="replace"),

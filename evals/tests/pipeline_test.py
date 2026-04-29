@@ -1,8 +1,10 @@
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -237,6 +239,33 @@ def test_visible_test_outcome_error_on_timeout(tmp_path):
     assert result.exit_code is None
 
 
+def test_test_command_returns_when_background_descendant_holds_stdout_pipe(tmp_path):
+    command = shlex.join(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import subprocess, sys; "
+                "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(4)']); "
+                "raise SystemExit(0)"
+            ),
+        ]
+    )
+
+    start = time.monotonic()
+    result = run_test_command(
+        command,
+        cwd=tmp_path,
+        env={**os.environ},
+        timeout_s=1,
+    )
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 2.5, "run_test_command should not wait for a pipe-holding background child"
+    assert result.outcome == "pass"
+    assert result.exit_code == 0
+
+
 def test_test_command_timeout_terminates_process_tree(tmp_path, process_tree_probe):
     result = run_test_command(
         process_tree_probe.shell_command(),
@@ -267,6 +296,28 @@ def test_visible_test_output_caps_and_drains(tmp_path):
     )
     assert result.outcome == "pass"
     assert result.stdout_truncated is True
+
+
+def test_test_command_artifact_records_original_and_effective_command(tmp_path):
+    pytest_pkg = tmp_path / "pytest"
+    pytest_pkg.mkdir()
+    (pytest_pkg / "__init__.py").write_text("")
+    (pytest_pkg / "__main__.py").write_text("raise SystemExit(0)\n")
+    output_path = tmp_path / "visible_test.json"
+
+    result = run_test_command(
+        "pytest -q",
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(tmp_path)},
+        timeout_s=30,
+        output_path=output_path,
+    )
+
+    payload = json.loads(output_path.read_text())
+    assert result.outcome == "pass"
+    assert payload["original_command"] == "pytest -q"
+    assert payload["effective_command"] == "python -m pytest -q"
+    assert payload["command"] == "python -m pytest -q"
 
 
 def test_pytest_rerun_uses_src_checkout_without_installing_project(tmp_path):
