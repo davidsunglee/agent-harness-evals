@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from evals import cli
+from evals.campaign import LockBusyError, acquire_lock, release_lock
 from evals.discovery import discover_cases, discover_frameworks
 from evals.setup import SetupResult, run_framework_setup
 from evals.workspace import WorkspaceError
@@ -811,6 +812,59 @@ def test_eval_auto_prepares_selected_cell_when_cache_missing(
     assert prepared["frameworks"] == ["good"]
     assert prepared["cases"] == ["case-001"]
     assert attempted_cells == [("good", "case-001")]
+
+
+def test_eval_clean_cache_refuses_when_current_campaign_is_locked(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    campaign_dir = cli.eval_new(
+        repo,
+        frameworks=["good"],
+        cases=["case-001"],
+        config_overrides={},
+    )
+    cache_dir = repo / ".runs-cache"
+    cache_dir.mkdir()
+    (cache_dir / "artifact.txt").write_text("shared cache artifact")
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo)
+    acquire_lock(campaign_dir, argv=["eval-all"])
+    try:
+        args = cli._build_parser().parse_args(["eval-clean-cache"])
+        with pytest.raises(LockBusyError):
+            cli.cmd_eval_clean_cache(args)
+    finally:
+        release_lock(campaign_dir)
+
+    assert (cache_dir / "artifact.txt").exists()
+
+
+def test_eval_clean_runs_refuses_when_current_campaign_is_locked(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    campaign_dir = cli.eval_new(
+        repo,
+        frameworks=["good"],
+        cases=["case-001"],
+        config_overrides={},
+    )
+    artifact = campaign_dir / "artifact.txt"
+    artifact.write_text("run artifact")
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo)
+    acquire_lock(campaign_dir, argv=["eval-all"])
+    try:
+        args = cli._build_parser().parse_args(["eval-clean-runs"])
+        with pytest.raises(LockBusyError):
+            cli.cmd_eval_clean_runs(args)
+    finally:
+        release_lock(campaign_dir)
+
+    assert artifact.exists()
 
 
 def test_eval_report_regenerates_report_while_holding_lock(

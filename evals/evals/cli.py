@@ -551,19 +551,31 @@ def cmd_eval_report(args) -> int:
     return 0
 
 
+def _clean_after_current_campaign_lock(repo_root: Path, target: Path, args) -> None:
+    campaign_dir = current_campaign(repo_root)
+    if campaign_dir is None:
+        if target.exists():
+            shutil.rmtree(target)
+        return
+
+    with lock(
+        campaign_dir,
+        argv=sys.argv,
+        force_unlock=getattr(args, "force_unlock", False),
+    ):
+        if target.exists():
+            shutil.rmtree(target)
+
+
 def cmd_eval_clean_cache(args) -> int:
     repo_root = _repo_root()
-    target = repo_root / ".runs-cache"
-    if target.exists():
-        shutil.rmtree(target)
+    _clean_after_current_campaign_lock(repo_root, repo_root / ".runs-cache", args)
     return 0
 
 
 def cmd_eval_clean_runs(args) -> int:
     repo_root = _repo_root()
-    target = repo_root / "runs"
-    if target.exists():
-        shutil.rmtree(target)
+    _clean_after_current_campaign_lock(repo_root, repo_root / "runs", args)
     return 0
 
 
@@ -621,12 +633,17 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("eval-report", help="regenerate CURRENT/report.md").set_defaults(
         func=cmd_eval_report
     )
-    sub.add_parser("eval-clean-cache", help="wipe .runs-cache/").set_defaults(
-        func=cmd_eval_clean_cache
+    p_clean_cache = sub.add_parser("eval-clean-cache", help="wipe .runs-cache/")
+    p_clean_cache.add_argument(
+        "--force-unlock", dest="force_unlock", action="store_true"
     )
-    sub.add_parser("eval-clean-runs", help="wipe runs/").set_defaults(
-        func=cmd_eval_clean_runs
+    p_clean_cache.set_defaults(func=cmd_eval_clean_cache)
+
+    p_clean_runs = sub.add_parser("eval-clean-runs", help="wipe runs/")
+    p_clean_runs.add_argument(
+        "--force-unlock", dest="force_unlock", action="store_true"
     )
+    p_clean_runs.set_defaults(func=cmd_eval_clean_runs)
 
     return parser
 
