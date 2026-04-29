@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from evals.campaign import current_campaign, eval_new, lock
@@ -44,6 +45,13 @@ def _campaign_overrides(campaign_dir: Path) -> dict:
     manifest = json.loads((campaign_dir / "manifest.json").read_text())
     raw = manifest.get("config_overrides", {})
     return {k: v for k, v in raw.items() if v is not None}
+
+
+@dataclass(frozen=True)
+class _PrepareResult:
+    summary: list[str]
+    failed: bool
+    case_failed: bool
 
 
 def _run_one_cell(
@@ -152,15 +160,17 @@ def _do_prepare(
     base_env: dict[str, str],
     dotenv: dict[str, str],
     setup_timeout_s: int,
-) -> tuple[list[str], bool]:
+) -> _PrepareResult:
     summary: list[str] = []
     failed = False
+    case_failed = False
 
     for case in cases:
         try:
             ensure_case_bare_repo(repo_root, case.case_id, cache_dir, case.fixture_repo)
         except Exception as exc:
             failed = True
+            case_failed = True
             summary.append(f"case {case.case_id}: bare-repo FAIL: {exc}")
             continue
         try:
@@ -168,6 +178,7 @@ def _do_prepare(
             summary.append(f"case {case.case_id}: ok")
         except Exception as exc:
             failed = True
+            case_failed = True
             summary.append(f"case {case.case_id}: venv FAIL: {exc}")
 
     for fw in frameworks:
@@ -192,7 +203,7 @@ def _do_prepare(
         if result.status == "failed":
             failed = True
 
-    return summary, failed
+    return _PrepareResult(summary=summary, failed=failed, case_failed=case_failed)
 
 
 # --------------------------------------------------------------------------
@@ -240,7 +251,7 @@ def cmd_eval_prepare(args) -> int:
     base_env = os.environ.copy()
     dotenv = load_dotenv(repo_root)
 
-    summary, failed = _do_prepare(
+    prepare_result = _do_prepare(
         repo_root=repo_root,
         frameworks=frameworks,
         cases=cases,
@@ -249,9 +260,9 @@ def cmd_eval_prepare(args) -> int:
         dotenv=dotenv,
         setup_timeout_s=args.setup_timeout_s,
     )
-    for line in summary:
+    for line in prepare_result.summary:
         print(line)
-    return 1 if failed else 0
+    return 1 if prepare_result.failed else 0
 
 
 def cmd_eval_new(args) -> int:
@@ -327,7 +338,7 @@ def cmd_eval_all(args) -> int:
     dotenv = load_dotenv(repo_root)
 
     if _prepare_needed(repo_root, frameworks, cases, cache_dir):
-        summary, _ = _do_prepare(
+        prepare_result = _do_prepare(
             repo_root=repo_root,
             frameworks=frameworks,
             cases=cases,
@@ -336,8 +347,11 @@ def cmd_eval_all(args) -> int:
             dotenv=dotenv,
             setup_timeout_s=600,
         )
-        for line in summary:
+        for line in prepare_result.summary:
             print(line)
+        if prepare_result.case_failed:
+            print("aborting eval-all due to case prepare failure", file=sys.stderr)
+            return 1
 
     manifest = json.loads((campaign_dir / "manifest.json").read_text())
     campaign_overrides = _campaign_overrides(campaign_dir)
@@ -414,6 +428,7 @@ def cmd_eval(args) -> int:
             base_env=base_env,
             dotenv=dotenv,
         )
+        write_report(campaign_dir)
     return 0
 
 

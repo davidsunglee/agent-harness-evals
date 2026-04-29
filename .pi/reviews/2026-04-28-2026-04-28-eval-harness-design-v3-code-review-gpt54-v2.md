@@ -78,4 +78,14 @@ Note: the planned hybrid re-review on `anthropic/claude-sonnet-4-6` failed due p
   - `cd evals && uv run pytest -q -m 'not integration'`
   - `cd evals && uv run pytest -q -m integration tests/integration/test_pytest_fixture.py`
 
-Remaining from reviewer: `eval-all` case prepare failures, `cmd_eval` report regeneration, setup idempotence/staleness, campaign timestamp collisions.
+Remaining from reviewer: setup idempotence/staleness, campaign timestamp collisions.
+
+**Batch 2: eval-all prepare aborts + eval report regeneration**
+- Fixed `eval-all` to abort non-zero on case workspace/cache preparation failures while still continuing past framework setup failures that should surface as `framework_misconfigured` cells.
+- Fixed single-cell `eval` to regenerate `report.md` before releasing the campaign lock.
+- Added regression coverage in `evals/tests/cli_test.py` for case-prepare aborts, framework-setup continuation, and report regeneration under lock.
+- Verification run:
+  - `cd evals && uv run pytest -q tests/cli_test.py`
+  - `cd evals && uv run pytest -q -m 'not integration'`
+
+Remaining from reviewer: setup idempotence/staleness, campaign timestamp collisions.

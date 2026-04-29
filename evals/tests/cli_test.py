@@ -1,4 +1,5 @@
 """CLI-level regression tests focused on misconfiguration surfacing."""
+from contextlib import contextmanager
 import hashlib
 import json
 import subprocess
@@ -8,6 +9,8 @@ import pytest
 
 from evals import cli
 from evals.discovery import discover_cases, discover_frameworks
+from evals.setup import SetupResult
+from evals.workspace import WorkspaceError
 
 
 def _init_repo(repo: Path) -> None:
@@ -20,6 +23,16 @@ def _write_good_framework(repo: Path, name: str = "good") -> None:
     fw.mkdir()
     (fw / "manifest.json").write_text(
         json.dumps({"entry": "./run.py", "env": [], "model": "fake"})
+    )
+
+
+def _write_setup_framework(repo: Path, name: str = "setup-fw") -> None:
+    fw = repo / "frameworks" / name
+    fw.mkdir()
+    (fw / "manifest.json").write_text(
+        json.dumps(
+            {"entry": "./run.py", "setup": "./setup.sh", "env": [], "model": "fake"}
+        )
     )
 
 
@@ -206,3 +219,143 @@ def test_eval_all_unknown_case_exits_2(
     err = capsys.readouterr().err
     assert "nope" in err
     assert "case" in err.lower()
+
+
+def test_eval_all_aborts_nonzero_when_case_prepare_fails(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _write_good_framework(repo)
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    _write_good_case(repo, fixture)
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo)
+
+    def fail_bare_repo(*_args, **_kwargs):
+        raise WorkspaceError("unable to materialize bare repo")
+
+    attempted_cells: list[tuple[str, str]] = []
+
+    def record_cell_attempt(**kwargs):
+        attempted_cells.append((kwargs["fw"].name, kwargs["case"].case_id))
+
+    monkeypatch.setattr(cli, "ensure_case_bare_repo", fail_bare_repo)
+    monkeypatch.setattr(cli, "_run_one_cell", record_cell_attempt)
+
+    args = cli._build_parser().parse_args(["eval-all"])
+    rc = cli.cmd_eval_all(args)
+
+    assert rc == 1, "case cache/workspace prepare failures must make eval-all fail"
+    assert attempted_cells == [], "eval-all must not run cells after case prepare failure"
+    out = capsys.readouterr().out
+    assert "case case-001: bare-repo FAIL" in out
+
+
+def test_eval_all_continues_after_framework_setup_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _write_setup_framework(repo)
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    _write_good_case(repo, fixture)
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo)
+
+    def create_bare_repo(_repo_root, case_id, cache_dir, _fixture_repo):
+        bare_repo = cache_dir / f"{case_id}.git"
+        bare_repo.mkdir(parents=True, exist_ok=True)
+        return bare_repo
+
+    def create_venv(_repo_root, case_id, _fixture_repo, cache_dir):
+        venv = cache_dir / f"{case_id}.venv"
+        venv.mkdir(parents=True, exist_ok=True)
+        return venv
+
+    def fail_framework_setup(fw, *, cache_dir, base_env, dotenv, timeout_s):
+        setup_dir = cache_dir / "setup"
+        setup_dir.mkdir(parents=True, exist_ok=True)
+        (setup_dir / f"{fw.name}.fail").write_text('{"reason":"nonzero_exit"}')
+        return SetupResult(
+            framework=fw.name,
+            status="failed",
+            reason="nonzero_exit",
+            exit_code=1,
+            stdout_truncated=False,
+            stderr_truncated=False,
+            duration_s=0.0,
+        )
+
+    attempted_cells: list[tuple[str, str]] = []
+
+    def record_cell_attempt(**kwargs):
+        attempted_cells.append((kwargs["fw"].name, kwargs["case"].case_id))
+        kwargs["cell_dir"].mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(cli, "ensure_case_bare_repo", create_bare_repo)
+    monkeypatch.setattr(cli, "ensure_case_venv", create_venv)
+    monkeypatch.setattr(cli, "run_framework_setup", fail_framework_setup)
+    monkeypatch.setattr(cli, "_run_one_cell", record_cell_attempt)
+
+    args = cli._build_parser().parse_args(["eval-all"])
+    rc = cli.cmd_eval_all(args)
+
+    assert rc == 0
+    assert attempted_cells == [("setup-fw", "case-001")]
+
+
+def test_eval_regenerates_report_after_rerun_while_holding_lock(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _write_good_framework(repo)
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    _write_good_case(repo, fixture)
+    campaign_dir = cli.eval_new(
+        repo,
+        frameworks=["good"],
+        cases=["case-001"],
+        config_overrides={},
+    )
+
+    monkeypatch.setattr(cli, "_repo_root", lambda: repo)
+
+    actions: list[str] = []
+    locked = False
+
+    @contextmanager
+    def fake_lock(campaign_dir_arg, *, argv, force_unlock=False):
+        nonlocal locked
+        assert campaign_dir_arg == campaign_dir
+        actions.append("lock")
+        locked = True
+        try:
+            yield
+        finally:
+            locked = False
+            actions.append("unlock")
+
+    def fake_run_one_cell(**kwargs):
+        assert locked, "cell rerun must happen under the campaign lock"
+        actions.append("run")
+        kwargs["cell_dir"].mkdir(parents=True, exist_ok=True)
+
+    def fake_write_report(campaign_dir_arg: Path) -> None:
+        assert campaign_dir_arg == campaign_dir
+        assert locked, "report regeneration must happen before releasing the lock"
+        actions.append("report")
+
+    monkeypatch.setattr(cli, "lock", fake_lock)
+    monkeypatch.setattr(cli, "_run_one_cell", fake_run_one_cell)
+    monkeypatch.setattr(cli, "write_report", fake_write_report)
+
+    args = cli._build_parser().parse_args(["eval", "good", "case-001"])
+    rc = cli.cmd_eval(args)
+
+    assert rc == 0
+    assert actions == ["lock", "run", "report", "unlock"]
