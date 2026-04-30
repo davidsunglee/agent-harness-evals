@@ -303,11 +303,19 @@ def run_shell(command: str) -> str:
     repo = _STATE.get("repo_path")
     if repo is None:
         return "error: repo_path not initialized"
+    env = os.environ.copy()
+    # The case venv is built with --no-install-project so the fixture project is not
+    # installed. Mirror build_test_env's PYTHONPATH so pytest can import it without
+    # the agent needing to run `pip install`, which would mutate the case venv.
+    pythonpath_parts = [str(repo / "src"), str(repo)]
+    if env.get("PYTHONPATH"):
+        pythonpath_parts.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
     try:
         completed = subprocess.run(
             ["/bin/sh", "-c", command],
             cwd=str(repo),
-            env=os.environ.copy(),
+            env=env,
             capture_output=True,
             timeout=_SHELL_TIMEOUT_S,
         )
