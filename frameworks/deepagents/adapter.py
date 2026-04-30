@@ -9,6 +9,7 @@ import signal
 import sys
 import time
 import traceback
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -63,12 +64,26 @@ class _ReportArgs(BaseModel):
 _CAPTURED_REPORT: dict[str, Any] = {}
 
 
+def _normalize_test_run(test_run: Any) -> dict[str, Any]:
+    if isinstance(test_run, dict):
+        data = test_run
+    elif isinstance(test_run, BaseModel):
+        data = test_run.model_dump()
+    else:
+        data = {key: getattr(test_run, key) for key in ("command", "exit_code", "summary")}
+    return {
+        "command": data["command"],
+        "exit_code": int(data["exit_code"]),
+        "summary": data["summary"],
+    }
+
+
 @tool("submit_report", args_schema=_ReportArgs)
 def submit_report(
     root_cause: str,
     summary: str,
     changed_files: list[str],
-    tests_run: list[dict[str, Any]],
+    tests_run: list[Any],
     evidence: str,
     confidence: float,
 ) -> str:
@@ -77,10 +92,7 @@ def submit_report(
     Args mirror shared/task-spec.md's `output` schema. The harness derives the
     authoritative diff and rerun results — these fields are informational.
     """
-    normalized_tests = [
-        {"command": t["command"], "exit_code": int(t["exit_code"]), "summary": t["summary"]}
-        for t in tests_run
-    ]
+    normalized_tests = [_normalize_test_run(t) for t in tests_run]
     _CAPTURED_REPORT.clear()
     _CAPTURED_REPORT.update({
         "root_cause": root_cause,
@@ -114,9 +126,39 @@ Hard constraints:
 """
 
 
+def _prepend_env_path(entry: str, current: str | None) -> str:
+    return f"{entry}{os.pathsep}{current}" if current else entry
+
+
+def _build_shell_env(repo_path: str) -> dict[str, str]:
+    env = os.environ.copy()
+
+    repo = Path(repo_path).resolve()
+    pythonpath_entries = [str(repo / "src"), str(repo)]
+    existing_pythonpath = env.get("PYTHONPATH")
+    if existing_pythonpath:
+        pythonpath_entries.append(existing_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
+
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+    case_venv = env.get("AGENT_HARNESS_CASE_VENV") or env.get("UV_PROJECT_ENVIRONMENT")
+    if case_venv:
+        case_venv_path = Path(case_venv).resolve()
+        env["UV_PROJECT_ENVIRONMENT"] = str(case_venv_path)
+        env["UV_NO_SYNC"] = "1"
+        env["PATH"] = _prepend_env_path(str(case_venv_path / "bin"), env.get("PATH"))
+
+    return env
+
+
 def _build_agent(*, model_name: str, repo_path: str):
     model = init_chat_model(f"anthropic:{model_name}")
-    backend = LocalShellBackend(root_dir=repo_path)
+    backend = LocalShellBackend(
+        root_dir=repo_path,
+        virtual_mode=False,
+        env=_build_shell_env(repo_path),
+    )
     return create_deep_agent(
         model=model,
         backend=backend,

@@ -36,10 +36,12 @@ DeepAgents (Python, on top of LangGraph) — adapter for the agent shootout's so
 
 ## LocalShellBackend cwd & env contingency
 
-`LocalShellBackend` inherits the parent process env by default. The harness builds the agent's env via `build_agent_env` (in `evals/evals/env.py`) and prepends `<case-venv>/bin` to `PATH`, then passes that env to the adapter subprocess. DeepAgents propagates that env through to its subprocess `pytest`/`git` invocations — so the harness-prepared `PATH` reaches them automatically. If a future deepagents change blocks this propagation, the contingency is to pass `env=os.environ.copy()` explicitly at the shell-tool call site (Approach B already does this).
+`LocalShellBackend` does not inherit the parent process env unless configured. The adapter passes an explicit shell env built from `os.environ.copy()`, with `<case-venv>/bin` forced to the front of `PATH`, `UV_PROJECT_ENVIRONMENT=<case-venv>`, `UV_NO_SYNC=1`, `PYTHONPATH=<repo>/src:<repo>`, and `PYTHONDONTWRITEBYTECODE=1`. This keeps agent-side `pytest`/`git` invocations on the harness-prepared case environment while preventing `uv run` from syncing into that shared venv or Python from adding `__pycache__` files to the submitted diff.
+
+`run.sh` also protects the case venv from the adapter runtime itself: it preserves the harness-provided `UV_PROJECT_ENVIRONMENT` as `AGENT_HARNESS_CASE_VENV`, unsets `UV_PROJECT_ENVIRONMENT`, then starts the adapter with this directory's own frozen `uv` environment.
 
 ## Constraints honored by the agent
 
 - The agent does not commit, reset, or otherwise mutate `.git/` in `input.repo_path` — diff derivation is the harness's responsibility.
-- The agent does not run `pip install`, `uv sync`, `uv add`, or any command that would mutate the harness-owned case venv. Tests use the venv on `PATH` only.
+- The agent does not run `pip install`, `uv sync`, `uv add`, or any command that would mutate the harness-owned case venv. Tests use the venv on `PATH` with `UV_NO_SYNC=1` and the worktree exposed through `PYTHONPATH`.
 - The agent respects `edit_constraints.disallowed_paths` (gitignore-style globs blocking edits to tests, fixtures, lockfiles, `.git/`, etc.).
