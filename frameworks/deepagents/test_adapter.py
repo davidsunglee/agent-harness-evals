@@ -7,10 +7,12 @@ Stdlib-only (unittest); no pytest dependency added to this framework.
 """
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -166,6 +168,119 @@ class TraceAssociationTest(unittest.TestCase):
         self.assertEqual(steps[0]["result"], {"content": "A"})
         self.assertEqual(steps[1]["args"], {"file_path": "/b.py"})
         self.assertEqual(steps[1]["result"], {"content": "B"})
+
+
+class ShellEnvSecretIsolationTest(unittest.TestCase):
+    """Regression for: shell env must not forward provider/API secrets.
+
+    Reproducer (pre-fix): _build_shell_env starts from os.environ.copy() and
+    forwards everything — including ANTHROPIC_API_KEY and other provider tokens —
+    into LocalShellBackend. The model-controlled `execute` tool can then read
+    those secrets and surface them in traces/artifacts.
+    """
+
+    _SECRET_KEYS_THAT_MUST_BE_DROPPED = (
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "GITHUB_TOKEN",
+        "HF_TOKEN",
+        "GCP_SERVICE_ACCOUNT_KEY",
+    )
+
+    def _patched_environ(self) -> dict[str, str]:
+        return {
+            "ANTHROPIC_API_KEY": "sk-ant-SENSITIVE-REVIEW-SECRET",
+            "OPENAI_API_KEY": "sk-openai-SENSITIVE",
+            "AWS_ACCESS_KEY_ID": "AKIA-SENSITIVE",
+            "AWS_SECRET_ACCESS_KEY": "aws-secret-SENSITIVE",
+            "AWS_SESSION_TOKEN": "aws-session-SENSITIVE",
+            "GITHUB_TOKEN": "ghp_SENSITIVE",
+            "HF_TOKEN": "hf_SENSITIVE",
+            "GCP_SERVICE_ACCOUNT_KEY": "gcp-SENSITIVE",
+            "PATH": "/usr/local/bin:/usr/bin:/bin",
+            "HOME": "/tmp/fake-home",
+            "LANG": "en_US.UTF-8",
+            "TERM": "xterm-256color",
+        }
+
+    def test_provider_secrets_not_in_shell_env(self) -> None:
+        with tempfile.TemporaryDirectory() as parent:
+            repo = Path(parent) / "repo"
+            repo.mkdir()
+            with mock.patch.dict(os.environ, self._patched_environ(), clear=True):
+                env = adapter._build_shell_env(repo_path=str(repo))
+
+            for key in self._SECRET_KEYS_THAT_MUST_BE_DROPPED:
+                self.assertNotIn(
+                    key,
+                    env,
+                    msg=f"{key} must not be forwarded into the shell tool env",
+                )
+            joined_values = "\n".join(env.values())
+            self.assertNotIn(
+                "SENSITIVE",
+                joined_values,
+                msg=f"shell env still contains a SENSITIVE marker: {env}",
+            )
+
+    def test_safe_keys_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as parent:
+            repo = Path(parent) / "repo"
+            repo.mkdir()
+            with mock.patch.dict(os.environ, self._patched_environ(), clear=True):
+                env = adapter._build_shell_env(repo_path=str(repo))
+
+            self.assertIn("PATH", env)
+            self.assertIn("HOME", env)
+            self.assertEqual(env["HOME"], "/tmp/fake-home")
+            self.assertEqual(env["LANG"], "en_US.UTF-8")
+            self.assertEqual(env["TERM"], "xterm-256color")
+            self.assertEqual(env["PYTHONDONTWRITEBYTECODE"], "1")
+            self.assertIn(str(repo.resolve()), env["PYTHONPATH"])
+
+    def test_case_venv_still_prepended_to_path(self) -> None:
+        with tempfile.TemporaryDirectory() as parent:
+            repo = Path(parent) / "repo"
+            repo.mkdir()
+            case_venv = Path(parent) / "case-venv"
+            (case_venv / "bin").mkdir(parents=True)
+            extra = self._patched_environ()
+            extra["AGENT_HARNESS_CASE_VENV"] = str(case_venv)
+            with mock.patch.dict(os.environ, extra, clear=True):
+                env = adapter._build_shell_env(repo_path=str(repo))
+
+            self.assertEqual(env["UV_PROJECT_ENVIRONMENT"], str(case_venv.resolve()))
+            self.assertEqual(env["UV_NO_SYNC"], "1")
+            self.assertTrue(
+                env["PATH"].startswith(str(case_venv.resolve() / "bin")),
+                msg=f"case venv bin must be first on PATH; got {env['PATH']!r}",
+            )
+
+    def test_backend_execute_does_not_inherit_anthropic_api_key(self) -> None:
+        """End-to-end: a shell command executed via the backend cannot see
+        ANTHROPIC_API_KEY because the adapter scrubs it from the shell env."""
+        with tempfile.TemporaryDirectory() as parent:
+            repo = Path(parent) / "repo"
+            repo.mkdir()
+            with mock.patch.dict(
+                os.environ,
+                {**self._patched_environ()},
+                clear=True,
+            ):
+                backend = adapter._build_backend(repo_path=str(repo))
+                result = backend.execute('printf %s "${ANTHROPIC_API_KEY:-MISSING}"')
+
+            output = getattr(result, "output", "") or ""
+            stdout = getattr(result, "stdout", "") or ""
+            combined = f"{output}\n{stdout}"
+            self.assertNotIn(
+                "SENSITIVE",
+                combined,
+                msg=f"shell execute leaked ANTHROPIC_API_KEY: {combined!r}",
+            )
 
 
 if __name__ == "__main__":

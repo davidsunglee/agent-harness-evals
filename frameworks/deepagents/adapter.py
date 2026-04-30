@@ -135,19 +135,53 @@ def _prepend_env_path(entry: str, current: str | None) -> str:
     return f"{entry}{os.pathsep}{current}" if current else entry
 
 
+# Allowlist of environment variables forwarded to the model-controlled shell
+# tool. We intentionally start from an empty dict (NOT os.environ.copy()) so
+# adapter-process secrets like ANTHROPIC_API_KEY, OPENAI_API_KEY,
+# AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN, etc. cannot be exfiltrated by a shell
+# command and surfaced in traces/artifacts. Keys here are required for
+# repo-local pytest/git/uv invocations:
+#   - HOME: tools (git, uv, pytest cache, pip) read user config from $HOME.
+#   - LANG / LC_ALL / LC_CTYPE: locale; pytest and Python decoding rely on it.
+#   - TERM: pytest/colored output; harmless if unset.
+#   - TMPDIR: subprocesses write temp files here.
+#   - USER / LOGNAME: some tools (git) consult these for default identity.
+#   - SHELL: occasionally consulted by subprocess wrappers.
+#   - TZ: tests that touch dates may depend on it.
+#   - PATH: sanitized below; case-venv bin is prepended.
+_SAFE_PASSTHROUGH_ENV_KEYS: tuple[str, ...] = (
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "TMPDIR",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TZ",
+    "PATH",
+)
+
+
 def _build_shell_env(repo_path: str) -> dict[str, str]:
-    env = os.environ.copy()
+    src = os.environ
+    env: dict[str, str] = {}
+    for key in _SAFE_PASSTHROUGH_ENV_KEYS:
+        value = src.get(key)
+        if value is not None:
+            env[key] = value
 
     repo = Path(repo_path).resolve()
     pythonpath_entries = [str(repo / "src"), str(repo)]
-    existing_pythonpath = env.get("PYTHONPATH")
+    existing_pythonpath = src.get("PYTHONPATH")
     if existing_pythonpath:
         pythonpath_entries.append(existing_pythonpath)
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
 
     env["PYTHONDONTWRITEBYTECODE"] = "1"
 
-    case_venv = env.get("AGENT_HARNESS_CASE_VENV") or env.get("UV_PROJECT_ENVIRONMENT")
+    case_venv = src.get("AGENT_HARNESS_CASE_VENV") or src.get("UV_PROJECT_ENVIRONMENT")
     if case_venv:
         case_venv_path = Path(case_venv).resolve()
         env["UV_PROJECT_ENVIRONMENT"] = str(case_venv_path)
