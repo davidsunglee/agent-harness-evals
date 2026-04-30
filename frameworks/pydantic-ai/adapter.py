@@ -14,6 +14,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+import pathspec
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, UsageLimits
 from pydantic_ai.messages import (
@@ -35,6 +36,38 @@ _SHELL_OUTPUT_CAP_BYTES = 1024 * 1024  # 1 MiB per call
 _WATCHDOG_SAFETY_MARGIN_S = 5.0  # leave time to emit an envelope before the harness SIGKILLs us
 
 _STATE: dict[str, Path] = {}  # populated in main(); holds {"repo_path": <Path>}
+
+# Edit-constraint enforcement at the write_file/edit_file boundary. Populated
+# in main() from input.edit_constraints; consulted by every filesystem write.
+# Keys (all optional except disallowed_paths defaulting to empty list):
+#   disallowed_paths: list[str] of gitignore-style globs the agent must NOT modify.
+#   allowed_paths:    list[str] of gitignore-style globs the agent may ONLY modify
+#                     (None / absent means "no allowlist; all repo paths allowed").
+#   max_changed_files: int | None — cap on the size of the modified file set.
+_EDIT_CONSTRAINTS: dict[str, Any] = {}
+# Set of repo-relative posix paths the agent has written to so far. Used to
+# enforce max_changed_files. Re-writing the same path does not increment.
+_CHANGED_FILES: set[str] = set()
+
+
+# Allowlist of environment variables the model-controlled run_shell tool sees.
+# Starting from `os.environ.copy()` would forward provider/API tokens
+# (ANTHROPIC_API_KEY, AWS_*, GITHUB_TOKEN, ...) into traces and artifacts via
+# any shell command the model issues. Mirror the deepagents adapter and only
+# pass through the keys agent-side `pytest`/`git`/`uv` actually need.
+_SAFE_PASSTHROUGH_ENV_KEYS: tuple[str, ...] = (
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "TMPDIR",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TZ",
+    "PATH",
+)
 
 
 class _TestRun(BaseModel):
@@ -80,6 +113,36 @@ def _read_request() -> dict[str, Any]:
     return obj
 
 
+def _relative_posix(repo_root: Path, target: Path) -> str | None:
+    try:
+        return target.resolve(strict=False).relative_to(repo_root.resolve(strict=False)).as_posix()
+    except ValueError:
+        return None
+
+
+def _check_edit_constraints(rel_posix: str) -> str | None:
+    """Return an `error: ...` string if `rel_posix` violates edit_constraints,
+    or None if the write is allowed. Side-effect free."""
+    disallowed = _EDIT_CONSTRAINTS.get("disallowed_paths") or []
+    if disallowed:
+        spec = pathspec.PathSpec.from_lines("gitignore", disallowed)
+        if spec.match_file(rel_posix):
+            return f"error: path '{rel_posix}' matches disallowed_paths constraint"
+    allowed = _EDIT_CONSTRAINTS.get("allowed_paths")
+    if allowed is not None:
+        spec = pathspec.PathSpec.from_lines("gitignore", allowed)
+        if not spec.match_file(rel_posix):
+            return f"error: path '{rel_posix}' is not allowed by allowed_paths constraint"
+    max_files = _EDIT_CONSTRAINTS.get("max_changed_files")
+    if max_files is not None and rel_posix not in _CHANGED_FILES:
+        if len(_CHANGED_FILES) + 1 > int(max_files):
+            return (
+                f"error: writing '{rel_posix}' would exceed max_changed_files="
+                f"{max_files} (already changed: {sorted(_CHANGED_FILES)})"
+            )
+    return None
+
+
 def _resolve_within(repo_root: Path, user_path: str) -> Path | None:
     """Resolve user_path relative to repo_root; return None if it escapes repo_root."""
     if not user_path:
@@ -107,7 +170,7 @@ Your final response will be validated as an AgentReport with these fields: root_
 Workflow you must follow:
 1. Read the failing test command and captured failure output. Form a hypothesis about the root cause.
 2. Inspect the repository (list_dir, read_file, grep) before making any edits. Read the file the stack trace points at AND any files it imports from.
-3. Apply a minimal in-place edit that addresses the root cause. Do not edit files matching the disallowed_paths globs you were given. Do not edit tests, fixtures, lockfiles, or .git/ contents.
+3. Apply a minimal in-place edit that addresses the root cause. Do not edit files matching the disallowed_paths globs you were given. Do not edit tests, fixtures, lockfiles, or .git/ contents. write_file/edit_file enforce edit_constraints (disallowed_paths, allowed_paths, max_changed_files) and will return an `error:` string instead of writing if a call would violate them — adjust your plan if you see one.
 4. Re-run the failing test command via run_shell to confirm the fix.
 5. Return the final AgentReport with root_cause, summary, changed_files, tests_run, evidence, confidence.
 
@@ -158,12 +221,19 @@ def write_file(path: str, content: str) -> str:
     target = _resolve_within(repo, path)
     if target is None:
         return f"error: path '{path}' is outside the repository"
+    rel_posix = _relative_posix(repo, target)
+    if rel_posix is None:
+        return f"error: path '{path}' is outside the repository"
+    err = _check_edit_constraints(rel_posix)
+    if err is not None:
+        return err
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         data = content.encode("utf-8")
         target.write_bytes(data)
     except OSError as exc:
         return f"error: {exc}"
+    _CHANGED_FILES.add(rel_posix)
     return f"ok: wrote {len(data)} bytes to {path}"
 
 
@@ -179,6 +249,12 @@ def edit_file(path: str, old: str, new: str) -> str:
     target = _resolve_within(repo, path)
     if target is None:
         return f"error: path '{path}' is outside the repository"
+    rel_posix = _relative_posix(repo, target)
+    if rel_posix is None:
+        return f"error: path '{path}' is outside the repository"
+    err = _check_edit_constraints(rel_posix)
+    if err is not None:
+        return err
     try:
         original = target.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -192,6 +268,7 @@ def edit_file(path: str, old: str, new: str) -> str:
         target.write_text(replaced, encoding="utf-8")
     except OSError as exc:
         return f"error: {exc}"
+    _CHANGED_FILES.add(rel_posix)
     return "ok: replaced 1 occurrence"
 
 
@@ -229,6 +306,8 @@ def glob(pattern: str) -> str:
     repo = _STATE.get("repo_path")
     if repo is None:
         return "error: repo_path not initialized"
+    if pattern.startswith("/") or (len(pattern) > 1 and pattern[1] == ":"):
+        return f"error: absolute glob patterns are not supported: '{pattern}'"
     try:
         repo_resolved = repo.resolve(strict=False)
         matches = []
@@ -241,7 +320,7 @@ def glob(pattern: str) -> str:
             if len(matches) >= _GLOB_RESULTS_CAP:
                 matches.append(f"[truncated at {_GLOB_RESULTS_CAP} matches]")
                 break
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, NotImplementedError, RuntimeError) as exc:
         return f"error: {exc}"
     return "\n".join(matches) if matches else "(no matches)"
 
@@ -293,24 +372,55 @@ def grep(pattern: str, path: str = ".") -> str:
     return "\n".join(hits) if hits else "(no matches)"
 
 
+def _build_shell_env(repo: Path) -> dict[str, str]:
+    """Reconstruct the harness case-test env for the model-controlled run_shell tool.
+
+    Mirrors evals/evals/env.build_test_env semantics: only safe passthrough keys
+    plus PYTHONPATH=<repo>/src:<repo>; if AGENT_HARNESS_CASE_VENV is exported by
+    run.sh (preserved before run.sh unsets UV_PROJECT_ENVIRONMENT for the
+    adapter's own `uv run`), restore UV_PROJECT_ENVIRONMENT, set UV_NO_SYNC=1,
+    and prepend <case-venv>/bin to PATH. Provider/API secrets present in the
+    adapter process env are intentionally NOT forwarded so a model-issued shell
+    command cannot exfiltrate them via traces or artifacts.
+    """
+    src = os.environ
+    env: dict[str, str] = {}
+    for key in _SAFE_PASSTHROUGH_ENV_KEYS:
+        value = src.get(key)
+        if value is not None:
+            env[key] = value
+
+    repo_resolved = repo.resolve(strict=False)
+    pythonpath_entries = [str(repo_resolved / "src"), str(repo_resolved)]
+    existing_pythonpath = src.get("PYTHONPATH")
+    if existing_pythonpath:
+        pythonpath_entries.append(existing_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+    case_venv = src.get("AGENT_HARNESS_CASE_VENV") or src.get("UV_PROJECT_ENVIRONMENT")
+    if case_venv:
+        case_venv_path = Path(case_venv).resolve()
+        env["UV_PROJECT_ENVIRONMENT"] = str(case_venv_path)
+        env["UV_NO_SYNC"] = "1"
+        bin_dir = str(case_venv_path / "bin")
+        existing_path = env.get("PATH")
+        env["PATH"] = f"{bin_dir}{os.pathsep}{existing_path}" if existing_path else bin_dir
+    return env
+
+
 def run_shell(command: str) -> str:
     """Run a shell command in the repository root and return its stdout+stderr (capped).
 
-    Use for pytest, git diff, ls, etc. The cwd is pinned to the repo root and the env
-    is propagated from the parent process (which the harness has populated with the
-    case venv on PATH).
+    Use for pytest, git diff, ls, etc. The cwd is pinned to the repo root. The env
+    is reconstructed (not inherited) so test commands see the same case-venv
+    semantics as the harness (UV_PROJECT_ENVIRONMENT, UV_NO_SYNC, PATH, PYTHONPATH)
+    and provider secrets are not forwarded into the model-controlled tool.
     """
     repo = _STATE.get("repo_path")
     if repo is None:
         return "error: repo_path not initialized"
-    env = os.environ.copy()
-    # The case venv is built with --no-install-project so the fixture project is not
-    # installed. Mirror build_test_env's PYTHONPATH so pytest can import it without
-    # the agent needing to run `pip install`, which would mutate the case venv.
-    pythonpath_parts = [str(repo / "src"), str(repo)]
-    if env.get("PYTHONPATH"):
-        pythonpath_parts.append(env["PYTHONPATH"])
-    env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+    env = _build_shell_env(repo)
     try:
         completed = subprocess.run(
             ["/bin/sh", "-c", command],
@@ -504,6 +614,15 @@ def main() -> int:
             raise RuntimeError(f"input.repo_path does not exist or is not a directory: {repo_path}")
 
         _STATE["repo_path"] = repo_path
+
+        ec = input_obj.get("edit_constraints") or {}
+        _EDIT_CONSTRAINTS.clear()
+        _EDIT_CONSTRAINTS["disallowed_paths"] = list(ec.get("disallowed_paths") or [])
+        if "allowed_paths" in ec and ec["allowed_paths"] is not None:
+            _EDIT_CONSTRAINTS["allowed_paths"] = list(ec["allowed_paths"])
+        if ec.get("max_changed_files") is not None:
+            _EDIT_CONSTRAINTS["max_changed_files"] = int(ec["max_changed_files"])
+        _CHANGED_FILES.clear()
 
         agent = _build_agent(model_name)
         user_text = _user_message(input_obj)

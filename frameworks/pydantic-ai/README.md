@@ -23,7 +23,7 @@ Pydantic AI (Python) — adapter for the agent shootout's software-bugfix benchm
 The agent uses a **hybrid tool surface**:
 
 - **Filesystem (Pydantic-validated `@agent.tool_plain` Python functions)**: `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`. Path arguments are anchored at `input.repo_path` — any path that resolves outside the repo is rejected with an error string the model receives back.
-- **Shell (`run_shell(command: str)`)**: a single tool that calls `subprocess.run(["/bin/sh", "-c", command], cwd=input.repo_path, env=os.environ.copy(), capture_output=True, timeout=60)` and returns `exit_code: <N>` plus the combined stdout+stderr (capped at 1 MiB). This is the path for `pytest`, `git diff`, and anything else that needs shell composability.
+- **Shell (`run_shell(command: str)`)**: a single tool that calls `subprocess.run(["/bin/sh", "-c", command], cwd=input.repo_path, env=<reconstructed>, capture_output=True, timeout=60)` and returns `exit_code: <N>` plus the combined stdout+stderr (capped at 1 MiB). The env is rebuilt from a small allowlist (`HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TERM`, `TMPDIR`, `USER`, `LOGNAME`, `SHELL`, `TZ`, `PATH`) plus `PYTHONPATH=<repo>/src:<repo>` and `PYTHONDONTWRITEBYTECODE=1`. When `run.sh` preserved the harness-provided case venv as `AGENT_HARNESS_CASE_VENV`, the adapter restores `UV_PROJECT_ENVIRONMENT=<case-venv>`, sets `UV_NO_SYNC=1`, and prepends `<case-venv>/bin` to `PATH` so agent-side `pytest`/`uv` see the same case-test environment as harness reruns. Provider/API secrets (`ANTHROPIC_API_KEY`, etc.) needed by the adapter to talk to the model are deliberately not forwarded into the model-controlled shell. This is the path for `pytest`, `git diff`, and anything else that needs shell composability.
 
 Why hybrid: filesystem ops benefit from Pydantic-validated arg shapes and clearer per-step traces; shell composability is preserved for tests and `git diff` so we don't have to invent a separate test-runner tool.
 
@@ -61,4 +61,4 @@ If output validation fails (model returns malformed structured data after Pydant
 
 - The agent does not commit, reset, or otherwise mutate `.git/` in `input.repo_path` — diff derivation is the harness's responsibility.
 - The agent does not run `pip install`, `uv sync`, `uv add`, or any command that would mutate the harness-owned case venv. Tests use the venv on `PATH` only.
-- The agent respects `edit_constraints.disallowed_paths` (gitignore-style globs blocking edits to tests, fixtures, lockfiles, `.git/`, etc.).
+- The agent respects `edit_constraints.disallowed_paths` (gitignore-style globs blocking edits to tests, fixtures, lockfiles, `.git/`, etc.). `disallowed_paths`, `allowed_paths`, and `max_changed_files` are also enforced inside `write_file`/`edit_file`: a violating call returns an `error:` string to the model rather than mutating the worktree.
